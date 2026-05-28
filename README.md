@@ -1,19 +1,21 @@
-quant agent
+# QuantAgent 📈
 
 **AI 驱动的金融研究智能体 —— 集数据查询、ML 量化分析、策略回测和 Web 仪表盘于一体。**
 
-## 🚀 核心亮点
+> **Forked from [virattt/dexter](https://github.com/virattt/dexter)** (MIT, ~25K stars) — rearchitected with native OpenAI SDK streaming, DeepSeek V4 Pro as the default LLM, East Money (东方财富) for China-accessible data, and a full ML quant pipeline.
+
+## 🚀 核心亮点 / Highlights
 
 - **自主金融研究 Agent**：基于 LangChain 的智能体，支持复杂查询规划、自我验证和工具调用。
 - **ML 量化分析管线**：纯 TypeScript 实现 15+ 技术指标，结合 XGBoost 模型进行股票涨跌预测，并提供回测引擎（止损/止盈/仓位管理/权益曲线）。
 - **多数据源支持**：默认使用东方财富 HTTP API（免费、无需 Key），覆盖 A 股/港股/美股；保留 Financial Datasets 和 Yahoo Finance 备用。
 - **全功能 Web 界面**：零依赖的 Web 服务器（Bun.serve），提供 SSE 流式分析、Agent 对话、策略配置和历史记录管理。
-- **策略可配置**：通过 `.dexter/strategy.json` 自定义交易参数（仓位、阈值、因子权重等），无需改代码。
-- **多模型切换**：默认 DeepSeek V4 Pro，同时支持 OpenAI、Anthropic、Google Gemini、xAI Grok、Ollama 本地模型等。
+- **策略可配置**：通过 `.dexter/strategy.json` 自定义交易参数（仓位、阈值等），无需改代码。
+- **多模型切换**：默认 DeepSeek V4 Pro，同时支持 OpenAI、xAI Grok、OpenRouter、Moonshot 等。
 - **记忆系统**：基于 SQLite 的持久记忆和对话历史，支持向量搜索。
 - **CLI 与 Web 双模式**：保留原有的 Ink/React 终端 UI，同时新增现代化 Web 仪表盘。
 
-## 🛠 技术栈
+## 🛠 技术栈 / Tech Stack
 
 | 层级 | 技术 |
 |------|------|
@@ -28,36 +30,20 @@ quant agent
 
 ## 📦 快速开始
 
-\`\`\`bash
-# 安装依赖
+```bash
+git clone https://github.com/jayome7088-rgb/quant-agent.git
+cd quant-agent
 bun install
+cp .env.example .env   # 编辑 .env 填入 API Key
+bun run start           # CLI 模式
+bun run web             # Web 服务器 (默认 http://localhost:3100)
+```
 
-# 启动 CLI 模式
-bun run start
-
-# 启动 Web 服务器 (默认端口 3100)
-bun run web
-\`\`\`
-
-Web 界面打开后，你可以直接在搜索框输入股票代码（如 `AAPL`、`09868`），点击“分析”即可触发完整的 ML 分析流程；也可以在聊天页与 Agent 进行多轮对话。
+Web 界面打开后，可以直接在搜索框输入股票代码（如 `AAPL`、`09868`），点击「分析」触发完整 ML 分析流程；也可以在聊天页与 Agent 进行多轮对话。
 
 ## 🙏 致谢
 
 本项目灵感来源于 [virattt/dexter](https://github.com/virattt/dexter)（MIT License），在其基础架构上进行了重大扩展：用 TypeScript + Bun 重写核心、新增 ML 预测与回测引擎、集成东方财富数据源、增加 Web 仪表盘和策略配置系统。同样以 MIT 协议开源。
-# QuantAgent 📈
-
-An AI-powered financial research agent with stock prediction, ML quantitative pipeline, and web dashboard.
-
-## Highlights
-
-- Autonomous agent for multi-step financial research with self-validation.
-- Full ML pipeline: 15+ technical indicators (pure TS), XGBoost prediction, rolling backtest with position sizing.
-- Multi-market data (US/HK/China A-shares) via free East Money API.
-- Web UI with SSE streaming, agent chat, strategy editor, and history.
-- Strategy configurable via JSON (stop-loss, take-profit, factor weights).
-- Supports DeepSeek, OpenAI, Anthropic, Gemini, Grok, Ollama, etc.
-
-> **Forked from [virattt/dexter](https://github.com/virattt/dexter)** (MIT, ~25K stars) — rearchitected with native OpenAI SDK streaming, DeepSeek V4 Pro as the default LLM, East Money (东方财富) for China-accessible data, and a full ML quant pipeline.
 
 ---
 
@@ -417,28 +403,7 @@ Output: Full SEC Item 1A text
 
 ---
 
-## How to Install
-
-1. Clone and install:
-```bash
-git clone https://github.com/jayome7088-rgb/quant-agent.git
-cd quant-agent
-bun install
-```
-
-2. Configure `.env`:
-```bash
-cp .env.example .env
-```
-Edit `.env` with your API keys:
-```bash
-LLM_PROVIDER=deepseek
-DEEPSEEK_API_KEY=sk-your-key-here
-FINANCIAL_DATASETS_API_KEY=your-key-here  # free at financialdatasets.ai
-# DEXTER_WEB_PORT=3100                     # uncomment to change web UI port
-```
-
-3. Verify all layers:
+## 验证 / Verify
 ```bash
 bun run typecheck                 # 0 TypeScript errors
 bun run src/verify-e2e.ts         # Agent loop (streaming + tool calls)
@@ -447,12 +412,6 @@ bun run src/verify-finance.ts     # Financial tools (7 API tests)
 bun run src/verify-phase5.ts      # Agent + plan + self-validation
 ```
 
-## How to Run
-
-```bash
-bun start    # Interactive mode (Phase 6)
-bun dev      # Watch mode for development
-```
 
 ## Development Phases
 
