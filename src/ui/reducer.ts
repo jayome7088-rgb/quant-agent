@@ -70,11 +70,6 @@ export function reducer(state: UIState, event: AgentEvent): UIState {
         event.mode === 'tool-input' ? 'tool-use' : event.mode;
       const next: UIState = { ...state, mode };
 
-      // Append streaming text to output
-      if (event.text && (event.mode === 'responding' || event.mode === 'thinking')) {
-        next.output = state.output + event.text;
-      }
-
       // On mode transition from thinking → responding, merge thinking text into output
       if (event.mode === 'responding' && state.thinkingText) {
         next.output = state.output + `\n\x1b[90m${state.thinkingText}\x1b[0m\n`;

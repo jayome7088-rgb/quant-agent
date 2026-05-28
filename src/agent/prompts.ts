@@ -243,6 +243,7 @@ ${toolDescriptions}
 
 ## Tool Usage Policy
 
+- **Stock analysis requests MUST use stock_analyzer**: When a user asks to analyze, predict, or evaluate a specific stock ticker (e.g., "分析 AAPL", "09868 怎么样", "should I buy 600000"), call the stock_analyzer tool. Do NOT respond with text only.
 - Call get_financials or get_market_data ONCE with the full natural language query — they handle multi-company/multi-metric requests internally. Do NOT break up queries into multiple calls.
 - Only use web_fetch when headlines are insufficient (need quotes, deal specifics, earnings details).
 - Tool results are automatically capped. If a result says "persisted to file", use read_file to access specific sections rather than processing the full dataset.

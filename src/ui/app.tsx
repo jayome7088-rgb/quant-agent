@@ -1,4 +1,4 @@
-import React, { useEffect, useReducer, useState } from 'react';
+import React, { useEffect, useReducer, useRef, useState, useCallback } from 'react';
 import { Box, Text } from 'ink';
 import { Agent } from '../agent/agent.js';
 import { DEFAULT_MODEL } from '../model/llm.js';
@@ -9,14 +9,32 @@ import { ToolsPanel } from './components/tools-panel.js';
 import { OutputBox } from './components/output-box.js';
 import { Footer } from './components/footer.js';
 import { InputBar } from './components/input-bar.js';
+import type { AgentEvent } from '../agent/types.js';
 
 const MAX_ITERATIONS = 10;
+const TEXT_FLUSH_MS = 80;
 
 export const App: React.FC = () => {
   const [submittedQuery, setSubmittedQuery] = useState<string | null>(null);
   const [state, dispatch] = useReducer(reducer, initialState(''));
+  const [liveText, setLiveText] = useState('');
+  const streamBufRef = useRef('');
+
+  // Flush streaming text buffer every TEXT_FLUSH_MS for smooth typewriter effect
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const buf = streamBufRef.current;
+      if (buf.length > 0) {
+        streamBufRef.current = '';
+        setLiveText(prev => prev + buf);
+      }
+    }, TEXT_FLUSH_MS);
+    return () => clearInterval(timer);
+  }, []);
 
   const handleSubmit = (q: string) => {
+    setLiveText('');
+    streamBufRef.current = '';
     setSubmittedQuery(q);
   };
 
@@ -31,13 +49,32 @@ export const App: React.FC = () => {
 
       for await (const event of agent.run(submittedQuery)) {
         if (cancelled) break;
-        dispatch(event);
+
+        // Buffer streaming text for smooth rendering, dispatch mode/tool events normally
+        if (event.type === 'stream_progress') {
+          if (event.text) {
+            streamBufRef.current += event.text;
+          }
+          dispatch(event);
+        } else if (event.type === 'done') {
+          // Flush any remaining buffered text before the final answer
+          if (streamBufRef.current) {
+            setLiveText(prev => prev + streamBufRef.current);
+            streamBufRef.current = '';
+          }
+          dispatch(event);
+        } else {
+          dispatch(event);
+        }
       }
     };
 
     run();
     return () => { cancelled = true; };
   }, [submittedQuery]);
+
+  // Combine baselined output (thinking, final answer) with live streaming text
+  const displayOutput = state.output + liveText;
 
   // Idle state -- no query submitted yet
   if (!submittedQuery) {
@@ -68,7 +105,7 @@ export const App: React.FC = () => {
       <Header mode={state.mode} model={DEFAULT_MODEL} />
       {state.plan?.visible && <PlanPanel plan={state.plan} />}
       <ToolsPanel tools={state.tools} />
-      <OutputBox output={state.output} thinkingText={state.thinkingText} />
+      <OutputBox output={displayOutput} thinkingText={state.thinkingText} />
       <Footer
         tokens={state.tokens}
         iteration={state.iteration}

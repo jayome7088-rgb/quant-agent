@@ -1,5 +1,5 @@
 import { StructuredToolInterface } from '@langchain/core/tools';
-import { createGetFinancials, createGetMarketData, createReadFilings, createScreenStocks } from './finance/index.js';
+import { createGetFinancials, createGetMarketData, createReadFilings, createScreenStocks, createStockAnalyzer, STOCK_ANALYZER_DESCRIPTION } from './finance/index.js';
 import { skillTool, SKILL_TOOL_DESCRIPTION } from './skill.js';
 import { GET_FINANCIALS_DESCRIPTION } from './finance/get-financials.js';
 import { GET_MARKET_DATA_DESCRIPTION } from './finance/get-market-data.js';
@@ -51,6 +51,13 @@ export function getToolRegistry(model: string): RegisteredTool[] {
       description: SCREEN_STOCKS_DESCRIPTION,
       compactDescription: 'Screen stocks by financial criteria (P/E, growth, margins, etc.).',
       concurrencySafe: true,
+    },
+    {
+      name: 'stock_analyzer',
+      tool: createStockAnalyzer(),
+      description: STOCK_ANALYZER_DESCRIPTION,
+      compactDescription: 'ML stock analysis: XGBoost prediction, technical indicators, intraday data, rolling backtest. Use for stock analysis/trading questions.',
+      concurrencySafe: false,
     },
     {
       name: 'memory_search',

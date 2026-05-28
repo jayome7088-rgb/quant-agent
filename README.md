@@ -421,6 +421,20 @@ bun dev      # Watch mode for development
 7. **Advisory planning** — plans guide agent behavior but don't force tool calls; LLM may answer from knowledge
 8. **Rich event system** — 20 typed events enable real-time UI rendering with fine-grained progress visibility
 
+## 为什么选择 XGBoost
+
+`stock_analyzer` 工具使用 XGBoost（Gradient Boosted Trees）而非 LSTM/Transformer 等深度学习模型：
+
+- **表格数据最优**: XGBoost 在结构化特征（技术指标、量价因子）上的表现长期领先深度学习。Kaggle 竞赛中表格数据的冠军方案绝大多数使用 GBM 系列模型。
+
+- **可解释性**: 特征重要性（gain-based）直接反映每个因子对预测的贡献，用户可以一目了然。LSTM/Transformer 是黑盒模型，无法产出透明的特征排序。
+
+- **鲁棒性强**: XGBoost 内置 L1/L2 正则化、列采样、学习率衰减，天然防止过拟合。对于金融数据（高噪声、低信噪比），这一特性至关重要。
+
+- **滚动验证适配**: walk-forward validation 无 look-ahead bias，每个窗口独立训练一个 XGBoost 模型，严格模拟真实交易中"看到今天数据、预测明天方向"的时序约束。
+
+- **轻量部署**: 通过 Python 子进程调用 XGBoost 训练，Bun 端零依赖。对 2 年日线数据训练耗时约 3-8 秒。
+
 ## License
 
 MIT — based on [virattt/dexter](https://github.com/virattt/dexter)

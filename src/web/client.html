@@ -1,0 +1,995 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dexter Pro — Financial AI Agent</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d2991d;
+    --radius: 6px;
+    --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    --mono: 'Cascadia Code', 'JetBrains Mono', 'Fira Code', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  header h1 { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; white-space: nowrap; }
+  header h1 span { color: var(--accent); }
+
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+  .status-dot.disconnected { background: var(--red); }
+  .status-text { font-size: 12px; color: var(--muted); }
+
+  /* ── Tabs ── */
+  .tab-nav {
+    display: flex;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 0 20px;
+    gap: 0;
+  }
+  .tab-nav button {
+    background: none;
+    border: none;
+    color: var(--muted);
+    padding: 10px 20px;
+    font-size: 14px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    font-family: var(--font);
+  }
+  .tab-nav button:hover { color: var(--text); }
+  .tab-nav button.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  .tab-panel { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+  .tab-panel.active { display: flex; }
+
+  main { display: flex; flex: 1; flex-direction: column; overflow: hidden; }
+
+  /* ── Chat Tab ── */
+  .chat-container { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .msg {
+    max-width: 80%;
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    font-size: 14px;
+    line-height: 1.5;
+    animation: fadeIn 0.2s;
+  }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+  .msg.user {
+    align-self: flex-end;
+    background: var(--accent);
+    color: #fff;
+  }
+  .msg.assistant {
+    align-self: flex-start;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    white-space: pre-wrap;
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+  .msg.tool {
+    align-self: flex-start;
+    background: #1a1f2e;
+    border: 1px solid #2a3040;
+    font-size: 12px;
+    color: var(--muted);
+    max-width: 90%;
+  }
+  .msg.tool .tool-name { color: var(--yellow); font-weight: 600; }
+  .msg.error {
+    align-self: flex-start;
+    background: #2d1111;
+    border: 1px solid var(--red);
+    color: var(--red);
+    font-size: 13px;
+  }
+
+  .chat-input-row {
+    display: flex;
+    gap: 8px;
+    padding: 12px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .chat-input-row input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 10px 14px;
+    font-size: 14px;
+    font-family: var(--font);
+    outline: none;
+  }
+  .chat-input-row input:focus { border-color: var(--accent); }
+  .chat-input-row button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius);
+    padding: 10px 20px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .chat-input-row button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .api-key-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 8px 20px;
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .api-key-row select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 4px 8px;
+    font-size: 12px;
+  }
+  .api-key-row input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 4px 8px;
+    font-size: 12px;
+    font-family: var(--mono);
+  }
+  .api-key-row label { color: var(--muted); white-space: nowrap; }
+
+  /* ── Analysis Tab ── */
+  .search-bar {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: 10px;
+    background: var(--surface);
+    align-items: center;
+  }
+  .search-bar input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 8px 12px;
+    font-size: 14px;
+    font-family: var(--font);
+    outline: none;
+  }
+  .search-bar input:focus { border-color: var(--accent); }
+  .search-bar select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 8px;
+    font-size: 13px;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius);
+    padding: 8px 20px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn-primary:hover { opacity: 0.9; }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-ghost {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn-ghost:hover { color: var(--text); border-color: var(--muted); }
+
+  .progress-log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 20px;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .log-entry { padding: 3px 0; color: var(--muted); }
+  .log-entry.stage { color: var(--accent); }
+  .log-entry.error { color: var(--red); }
+  .log-entry.result { color: var(--green); }
+
+  .result-area {
+    flex: 2;
+    overflow-y: auto;
+    padding: 20px;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .empty-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  /* ── History Tab ── */
+  .history-container { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+  .history-toolbar {
+    display: flex;
+    gap: 10px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    align-items: center;
+  }
+  .history-toolbar input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 8px 12px;
+    font-size: 14px;
+    font-family: var(--font);
+    outline: none;
+  }
+  .history-toolbar input:focus { border-color: var(--accent); }
+  .history-toolbar select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 8px;
+    font-size: 13px;
+  }
+
+  .history-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 20px;
+  }
+
+  .history-item {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin: 8px 0;
+    overflow: hidden;
+  }
+  .history-item-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: var(--surface);
+    cursor: pointer;
+    gap: 12px;
+  }
+  .history-item-header:hover { background: #1c2129; }
+  .history-item-header .ticker { font-weight: 700; color: var(--accent); font-family: var(--mono); }
+  .history-item-header .interval { font-size: 11px; color: var(--muted); background: var(--bg); padding: 2px 8px; border-radius: 3px; }
+  .history-item-header .time { font-size: 12px; color: var(--muted); margin-left: auto; }
+  .history-item-header .summary { font-size: 12px; color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .history-item-body {
+    display: none;
+    padding: 14px;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+    max-height: 400px;
+    overflow-y: auto;
+  }
+  .history-item.open .history-item-body { display: block; }
+
+  .btn-delete {
+    background: none;
+    border: 1px solid var(--red);
+    color: var(--red);
+    padding: 4px 10px;
+    border-radius: var(--radius);
+    font-size: 11px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn-delete:hover { background: var(--red); color: #fff; }
+
+  /* ── Strategy Modal ── */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    width: 560px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 16px 48px rgba(0,0,0,0.4);
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .modal-header h2 { font-size: 16px; font-weight: 600; }
+  .modal-close {
+    background: none; border: none; color: var(--muted);
+    font-size: 20px; cursor: pointer; padding: 4px 8px; line-height: 1;
+  }
+  .modal-close:hover { color: var(--text); }
+  .modal-body { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 18px; }
+  .section-title {
+    font-size: 13px; font-weight: 700; color: var(--accent);
+    border-bottom: 1px solid var(--border); padding-bottom: 6px; margin-bottom: 2px;
+  }
+  .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .field-grid.col-3 { grid-template-columns: 1fr 1fr 1fr; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 12px; color: var(--muted); }
+  .field input {
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+    color: var(--text); padding: 6px 10px; font-size: 13px; font-family: var(--mono); outline: none;
+  }
+  .field input:focus { border-color: var(--accent); }
+  .field .hint { font-size: 11px; color: var(--muted); }
+  .modal-footer { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--border); }
+  .btn-save { background: var(--green); color: #000; border: none; border-radius: var(--radius); padding: 8px 20px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .btn-save:hover { opacity: 0.9; }
+  .btn-reset { background: transparent; color: var(--red); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 16px; font-size: 13px; cursor: pointer; }
+  .modal-status { flex: 1; font-size: 12px; color: var(--muted); }
+  .modal-status.ok { color: var(--green); }
+  .modal-status.err { color: var(--red); }
+
+  @media (max-width: 700px) {
+    .msg { max-width: 95%; }
+    .modal { width: 95vw; }
+    .field-grid, .field-grid.col-3 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="status-dot" id="statusDot"></div>
+  <h1>Dexter <span>Pro</span></h1>
+  <span class="status-text" id="statusText">connecting...</span>
+</header>
+
+<!-- Tab Navigation -->
+<div class="tab-nav">
+  <button class="active" data-tab="chat">聊天</button>
+  <button data-tab="analysis">分析</button>
+  <button data-tab="history">历史</button>
+</div>
+
+<main>
+  <!-- ═══ Chat Tab ═══ -->
+  <div class="tab-panel active" id="panel-chat">
+    <div class="chat-container">
+      <div class="chat-messages" id="chatMessages">
+        <div class="empty-state">向 Dexter Pro 提问，例如「帮我分析 AAPL 的财务状况」</div>
+      </div>
+      <div class="api-key-row">
+        <label>Provider:</label>
+        <select id="apiProvider">
+          <option value="deepseek">DeepSeek</option>
+          <option value="openai">OpenAI</option>
+        </select>
+        <label>API Key:</label>
+        <input type="password" id="apiKeyInput" placeholder="输入 API Key（留空使用服务器配置）…">
+        <button class="btn-ghost" onclick="saveApiKey()" style="font-size:12px;padding:4px 10px;">保存</button>
+      </div>
+      <div class="chat-input-row">
+        <input type="text" id="chatInput" placeholder="输入你的问题…" autofocus>
+        <button id="chatSendBtn" onclick="sendChat()">发送</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Analysis Tab ═══ -->
+  <div class="tab-panel" id="panel-analysis">
+    <div class="search-bar">
+      <input type="text" id="tickerInput" placeholder="输入股票代码… (e.g. 09868, AAPL, 600000)">
+      <select id="intervalSelect">
+        <option value="1m">1m</option>
+        <option value="5m" selected>5m</option>
+        <option value="15m">15m</option>
+        <option value="30m">30m</option>
+        <option value="1h">1h</option>
+      </select>
+      <button class="btn-ghost" id="strategyBtn" onclick="openStrategy()">策略</button>
+      <button class="btn-primary" id="analyzeBtn" onclick="startAnalysis()">分析</button>
+    </div>
+    <div class="progress-log" id="progressLog">
+      <div class="empty-state">输入股票代码并点击「分析」开始</div>
+    </div>
+    <div class="result-area" id="resultArea">
+      <div class="empty-state">等待分析结果…</div>
+    </div>
+  </div>
+
+  <!-- ═══ History Tab ═══ -->
+  <div class="tab-panel" id="panel-history">
+    <div class="history-container">
+      <div class="history-toolbar">
+        <input type="text" id="historySearch" placeholder="搜索股票代码…" oninput="loadHistory()">
+        <select id="historySort" onchange="loadHistory()">
+          <option value="desc">最新优先</option>
+          <option value="asc">最早优先</option>
+        </select>
+        <button class="btn-ghost" onclick="loadHistory()">刷新</button>
+      </div>
+      <div class="history-list" id="historyList">
+        <div class="empty-state">暂无分析记录</div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- Strategy Modal -->
+<div class="modal-overlay" id="strategyModal">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2>策略配置</h2>
+      <button class="modal-close" onclick="closeStrategy()">&times;</button>
+    </div>
+    <div class="modal-body" id="strategyBody"></div>
+    <div class="modal-footer">
+      <button class="btn-save" onclick="saveStrategy()">保存</button>
+      <button class="btn-reset" onclick="resetStrategy()">恢复默认</button>
+      <span class="modal-status" id="modalStatus"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// State
+// ═══════════════════════════════════════════════════════════════════════════
+let currentSSE = null;
+let strategyConfig = null;
+let strategyDefaults = null;
+let chatHistory = [];
+let currentChatSSE = null;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Tabs
+// ═══════════════════════════════════════════════════════════════════════════
+document.querySelectorAll('.tab-nav button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-nav button').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
+    if (btn.dataset.tab === 'history') loadHistory();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WebSocket
+// ═══════════════════════════════════════════════════════════════════════════
+const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const ws = new WebSocket(`${protocol}//${location.host}/ws`);
+const statusDot = document.getElementById('statusDot');
+const statusText = document.getElementById('statusText');
+
+ws.onopen = () => {
+  statusDot.classList.remove('disconnected');
+  statusText.textContent = '已连接';
+};
+ws.onclose = () => {
+  statusDot.classList.add('disconnected');
+  statusText.textContent = '已断开';
+};
+ws.onmessage = (e) => {
+  try {
+    const data = JSON.parse(e.data);
+    if (data.type === 'strategy_updated') {
+      strategyConfig = data.config;
+      renderStrategyFields();
+      setStatus('策略已同步', 'ok');
+    }
+    if (data.type === 'history_updated') {
+      // Reload history if on that tab
+      const panel = document.getElementById('panel-history');
+      if (panel.classList.contains('active')) loadHistory();
+    }
+  } catch {}
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Chat
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Load persisted data
+try {
+  const saved = localStorage.getItem('dexter_chat_history');
+  if (saved) chatHistory = JSON.parse(saved);
+  const savedKey = localStorage.getItem('dexter_api_key');
+  if (savedKey) document.getElementById('apiKeyInput').value = savedKey;
+  const savedProvider = localStorage.getItem('dexter_api_provider');
+  if (savedProvider) document.getElementById('apiProvider').value = savedProvider;
+} catch {}
+
+function saveApiKey() {
+  const key = document.getElementById('apiKeyInput').value.trim();
+  const provider = document.getElementById('apiProvider').value;
+  if (key) {
+    localStorage.setItem('dexter_api_key', key);
+    localStorage.setItem('dexter_api_provider', provider);
+  } else {
+    localStorage.removeItem('dexter_api_key');
+    localStorage.removeItem('dexter_api_provider');
+  }
+  addChatMessage('system', 'API Key 已保存');
+}
+
+function persistChat() {
+  try {
+    // Keep last 200 messages
+    const trimmed = chatHistory.slice(-200);
+    localStorage.setItem('dexter_chat_history', JSON.stringify(trimmed));
+  } catch {}
+}
+
+function restoreChat() {
+  const container = document.getElementById('chatMessages');
+  container.innerHTML = '';
+  if (chatHistory.length === 0) {
+    container.innerHTML = '<div class="empty-state">向 Dexter Pro 提问，例如「帮我分析 AAPL 的财务状况」</div>';
+    return;
+  }
+  for (const m of chatHistory) {
+    appendMsgElement(m.role, m.content);
+  }
+}
+
+function addChatMessage(role, content) {
+  chatHistory.push({ role, content, ts: Date.now() });
+  appendMsgElement(role, content);
+  persistChat();
+  const container = document.getElementById('chatMessages');
+  container.scrollTop = container.scrollHeight;
+}
+
+function appendMsgElement(role, content) {
+  const container = document.getElementById('chatMessages');
+  // Remove empty-state if present
+  const es = container.querySelector('.empty-state');
+  if (es) es.remove();
+
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.textContent = content;
+  container.appendChild(div);
+}
+
+async function sendChat() {
+  const input = document.getElementById('chatInput');
+  const query = input.value.trim();
+  if (!query) return;
+
+  const btn = document.getElementById('chatSendBtn');
+  input.disabled = true;
+  btn.disabled = true;
+
+  addChatMessage('user', query);
+  input.value = '';
+
+  // Create an assistant message placeholder for streaming
+  const container = document.getElementById('chatMessages');
+  const es = container.querySelector('.empty-state');
+  if (es) es.remove();
+
+  const assistantMsg = document.createElement('div');
+  assistantMsg.className = 'msg assistant';
+  assistantMsg.textContent = '思考中…';
+  container.appendChild(assistantMsg);
+  container.scrollTop = container.scrollHeight;
+
+  let assistantContent = '';
+
+  // Get API key
+  const apiKey = document.getElementById('apiKeyInput').value.trim();
+  const provider = document.getElementById('apiProvider').value;
+
+  // Kill previous
+  if (currentChatSSE) { currentChatSSE.close(); currentChatSSE = null; }
+
+  try {
+    const resp = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, apiKey: apiKey || undefined, provider: apiKey ? provider : undefined }),
+    });
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    let currentEvent = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('event:')) {
+          currentEvent = line.slice(6).trim();
+        } else if (line.startsWith('data:')) {
+          const dataStr = line.slice(5).trim();
+          if (!dataStr) continue;
+
+          try {
+            const d = JSON.parse(dataStr);
+            if (currentEvent === 'token') {
+              assistantContent += d.text || '';
+              assistantMsg.textContent = assistantContent || '…';
+            } else if (currentEvent === 'thinking') {
+              assistantMsg.textContent = `思考: ${d.text}`;
+            } else if (currentEvent === 'tool_start') {
+              addChatMessage('tool', `调用工具: ${d.tool}`);
+            } else if (currentEvent === 'tool_error') {
+              addChatMessage('error', `工具 ${d.tool} 出错: ${d.error}`);
+            } else if (currentEvent === 'done') {
+              if (d.answer && !assistantContent) {
+                assistantContent = d.answer;
+              }
+              assistantMsg.textContent = assistantContent || d.answer || '(无回复)';
+            }
+          } catch {}
+        }
+      }
+      container.scrollTop = container.scrollHeight;
+    }
+
+    // Finalize
+    if (assistantContent) {
+      assistantMsg.textContent = assistantContent;
+      chatHistory.push({ role: 'assistant', content: assistantContent, ts: Date.now() });
+      persistChat();
+    } else {
+      assistantMsg.textContent = '(无回复)';
+    }
+  } catch (err) {
+    assistantMsg.textContent = '请求失败: ' + err.message;
+    assistantMsg.className = 'msg error';
+  }
+
+  input.disabled = false;
+  btn.disabled = false;
+  input.focus();
+}
+
+document.getElementById('chatInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') sendChat();
+});
+
+// Restore chat on load
+restoreChat();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Stock Analysis (same as before)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function startAnalysis() {
+  const ticker = document.getElementById('tickerInput').value.trim();
+  if (!ticker) return;
+
+  const interval = document.getElementById('intervalSelect').value;
+  const btn = document.getElementById('analyzeBtn');
+  const log = document.getElementById('progressLog');
+  const result = document.getElementById('resultArea');
+
+  log.innerHTML = '';
+  result.innerHTML = '<div class="empty-state">分析中…</div>';
+  btn.disabled = true;
+
+  if (currentSSE) { currentSSE.close(); currentSSE = null; }
+
+  addLog(`开始分析 ${ticker} (${interval})...`, 'stage');
+
+  currentSSE = new EventSource(`/api/analyze?ticker=${encodeURIComponent(ticker)}&interval=${interval}`);
+
+  currentSSE.addEventListener('progress', (e) => {
+    try { const d = JSON.parse(e.data); addLog(d.message, 'stage'); } catch {}
+  });
+
+  currentSSE.addEventListener('result', (e) => { result.textContent = e.data; });
+
+  currentSSE.addEventListener('done', () => {
+    btn.disabled = false;
+    currentSSE?.close();
+    currentSSE = null;
+  });
+
+  currentSSE.addEventListener('error', (e) => {
+    addLog(`错误: ${e.data || '未知错误'}`, 'error');
+    btn.disabled = false;
+    currentSSE?.close();
+    currentSSE = null;
+  });
+
+  currentSSE.onerror = () => {
+    addLog('SSE 连接中断', 'error');
+    btn.disabled = false;
+    currentSSE?.close();
+    currentSSE = null;
+  };
+}
+
+function addLog(msg, cls = '') {
+  const log = document.getElementById('progressLog');
+  const div = document.createElement('div');
+  div.className = `log-entry ${cls}`;
+  div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+document.getElementById('tickerInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') startAnalysis();
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// History
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function loadHistory() {
+  const search = document.getElementById('historySearch').value.trim();
+  const sort = document.getElementById('historySort').value;
+  const list = document.getElementById('historyList');
+
+  try {
+    const params = new URLSearchParams({ sort, limit: '100' });
+    if (search) params.set('search', search);
+    const resp = await fetch('/api/history?' + params);
+    const data = await resp.json();
+
+    if (!data.entries || data.entries.length === 0) {
+      list.innerHTML = '<div class="empty-state">暂无分析记录</div>';
+      return;
+    }
+
+    list.innerHTML = data.entries.map(e => `
+      <div class="history-item" id="hist-${e.id}">
+        <div class="history-item-header" onclick="toggleHistory(${e.id})">
+          <span class="ticker">${escHtml(e.ticker)}</span>
+          <span class="interval">${escHtml(e.interval)}</span>
+          <span class="summary">${escHtml(e.summary || '')}</span>
+          <span class="time">${escHtml(e.created_at)}</span>
+          <button class="btn-delete" onclick="event.stopPropagation();deleteHistory(${e.id})">删除</button>
+        </div>
+        <div class="history-item-body"></div>
+      </div>
+    `).join('');
+  } catch (err) {
+    list.innerHTML = `<div class="empty-state">加载失败: ${err.message}</div>`;
+  }
+}
+
+function toggleHistory(id) {
+  const item = document.getElementById('hist-' + id);
+  const body = item.querySelector('.history-item-body');
+
+  if (item.classList.contains('open')) {
+    item.classList.remove('open');
+    return;
+  }
+
+  // Close others
+  document.querySelectorAll('.history-item.open').forEach(el => el.classList.remove('open'));
+
+  // Load content if empty
+  if (!body.textContent) {
+    body.textContent = '加载中…';
+    fetch(`/api/history/${id}`)
+      .then(r => r.json())
+      .then(data => { body.textContent = data.result || '(空)'; })
+      .catch(err => { body.textContent = '加载失败: ' + err.message; });
+  }
+
+  item.classList.add('open');
+}
+
+async function deleteHistory(id) {
+  try {
+    await fetch(`/api/history/${id}`, { method: 'DELETE' });
+    loadHistory();
+  } catch {}
+}
+
+// Escaping
+function escHtml(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Strategy Modal
+// ═══════════════════════════════════════════════════════════════════════════
+
+function openStrategy() { document.getElementById('strategyModal').classList.add('open'); loadStrategy(); }
+function closeStrategy() { document.getElementById('strategyModal').classList.remove('open'); }
+document.getElementById('strategyModal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeStrategy(); });
+
+function setStatus(msg, cls) {
+  const el = document.getElementById('modalStatus');
+  el.textContent = msg;
+  el.className = 'modal-status ' + (cls || '');
+}
+
+const BACKTEST_FIELDS = [
+  ['初始资金', 'backtest.initialCapital', ''],
+  ['止损比例', 'backtest.stopLoss', '负数，如 -0.05 = -5%'],
+  ['止盈比例', 'backtest.takeProfit', '正数，如 0.10 = 10%'],
+  ['手续费率', 'backtest.commission', '如 0.001 = 0.1%'],
+  ['滑点率', 'backtest.slippage', '如 0.0005 = 0.05%'],
+];
+const POSITION_FIELDS = [
+  ['轻仓仓位', 'backtest.positionSizing.light', '信号较强时仓位比例'],
+  ['中仓仓位', 'backtest.positionSizing.medium', '信号强时仓位比例'],
+  ['重仓仓位', 'backtest.positionSizing.heavy', '信号极强时仓位比例'],
+];
+const THRESHOLD_FIELDS = [
+  ['轻仓信号阈值', 'backtest.signalThresholds.light', '概率超过此值开轻仓'],
+  ['中仓信号阈值', 'backtest.signalThresholds.medium', '概率超过此值开中仓'],
+  ['重仓信号阈值', 'backtest.signalThresholds.heavy', '概率超过此值开重仓'],
+];
+const TRAINING_FIELDS = [
+  ['训练窗口', 'training.windowSize', '每轮训练的 K 线数量'],
+  ['测试集大小', 'training.testSize', '每轮验证的样本数'],
+  ['滚动步长', 'training.stepSize', '窗口每次前移的步数'],
+];
+
+function getByPath(obj, path) { return path.split('.').reduce((o, k) => (o != null ? o[k] : undefined), obj); }
+function setByPath(obj, path, value) {
+  const keys = path.split('.'); const last = keys.pop();
+  const target = keys.reduce((o, k) => { if (o[k] === undefined) o[k] = {}; return o[k]; }, obj);
+  target[last] = value;
+}
+
+function fieldHtml(label, path, hint, val) {
+  const id = 'f_' + path.replace(/\./g, '_');
+  return `<div class="field">
+    <label for="${id}">${label}</label>
+    <input id="${id}" type="number" step="any" value="${val}" data-path="${path}">
+    ${hint ? `<span class="hint">${hint}</span>` : ''}
+  </div>`;
+}
+
+function renderStrategyFields() {
+  const cfg = strategyConfig || strategyDefaults || {};
+  document.getElementById('strategyBody').innerHTML = `
+    <div class="section-title">回测参数</div>
+    <div class="field-grid">${BACKTEST_FIELDS.map(([l,p,h]) => fieldHtml(l,p,h,getByPath(cfg,p))).join('')}</div>
+    <div class="section-title">仓位比例</div>
+    <div class="field-grid col-3">${POSITION_FIELDS.map(([l,p,h]) => fieldHtml(l,p,h,getByPath(cfg,p))).join('')}</div>
+    <div class="section-title">仓位触发阈值</div>
+    <div class="field-grid col-3">${THRESHOLD_FIELDS.map(([l,p,h]) => fieldHtml(l,p,h,getByPath(cfg,p))).join('')}</div>
+    <div class="section-title">训练参数</div>
+    <div class="field-grid col-3">${TRAINING_FIELDS.map(([l,p,h]) => fieldHtml(l,p,h,getByPath(cfg,p))).join('')}</div>
+  `;
+}
+
+function readFormConfig() {
+  const cfg = JSON.parse(JSON.stringify(strategyConfig || strategyDefaults));
+  document.querySelectorAll('#strategyBody input[data-path]').forEach(input => {
+    const path = input.dataset.path;
+    const val = parseFloat(input.value);
+    if (!isNaN(val)) setByPath(cfg, path, val);
+  });
+  return cfg;
+}
+
+async function loadStrategy() {
+  try {
+    const res = await fetch('/api/strategy');
+    const data = await res.json();
+    strategyConfig = data.config;
+    if (!strategyDefaults) strategyDefaults = JSON.parse(JSON.stringify(data.config));
+    renderStrategyFields();
+    setStatus(`已加载`, 'ok');
+  } catch (err) { setStatus('加载失败: ' + err.message, 'err'); }
+}
+
+async function saveStrategy() {
+  try {
+    const cfg = readFormConfig();
+    const res = await fetch('/api/strategy', { method: 'PUT', body: JSON.stringify(cfg) });
+    const data = await res.json();
+    if (data.ok) { strategyConfig = data.config; setStatus('保存成功', 'ok'); }
+    else throw new Error(data.error || '未知错误');
+  } catch (err) { setStatus('保存失败: ' + err.message, 'err'); }
+}
+
+async function resetStrategy() {
+  if (!strategyDefaults) return;
+  strategyConfig = JSON.parse(JSON.stringify(strategyDefaults));
+  renderStrategyFields();
+  setStatus('已重置为默认值', 'ok');
+}
+
+// Init
+loadStrategy();
+</script>
+</body>
+</html>

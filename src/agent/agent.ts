@@ -34,6 +34,62 @@ const OVERFLOW_KEEP_ROUNDS = 3;
  * - Streaming LLM responses with fallback to blocking
  * - Per-turn microcompact + threshold-based full compaction
  */
+// ---------------------------------------------------------------------------
+// Stock query detection — bypasses LLM for stock analysis requests
+// ---------------------------------------------------------------------------
+
+const STOCK_KEYWORDS = [
+  '分析', '股票', '走势', '行情', '技术', '预测', '评测',
+  '看看', '怎么样', '还能', '能不能', '会不会', '该不该',
+  '涨', '跌', '买', '卖', '推荐', '建议', '趋势',
+  '帮我', '一下', '这个', '这支', '那只', '这只',
+  'price', 'stock', 'analyze', 'analysis', 'trend', 'predict',
+  'outlook', 'should I buy', 'should I sell',
+];
+
+function detectStockQuery(query: string): { ticker: string; interval?: '1m' | '5m' | '15m' | '30m' | '1h' } | null {
+  const q = query.trim();
+
+  // Extract potential tickers
+  const cnMatch = q.match(/\b(\d{6})\b/);          // A-share: 6 digits
+  const hkMatch = q.match(/\b(\d{4,5})\b/);         // HK: 4-5 digits
+  const usMatch = q.match(/\b([A-Z]{1,5})\b/i);     // US: 1-5 letters
+
+  const numericTicker = cnMatch?.[1] ?? hkMatch?.[1];
+  const alphaTicker = usMatch?.[1]?.toUpperCase();
+
+  // Short queries with just a ticker → stock analysis
+  const isShort = q.length <= 12;
+
+  // Check for stock-related intent
+  const hasKeyword = STOCK_KEYWORDS.some(k => q.toLowerCase().includes(k.toLowerCase()));
+
+  // Numeric tickers (HK/A-shares): always route (unlikely in non-stock context)
+  if (numericTicker && (isShort || hasKeyword)) {
+    const interval = q.match(/(\d+)分/)?.[1] ?? undefined;
+    return { ticker: numericTicker, interval: mapInterval(interval) };
+  }
+
+  // US tickers: require stock keyword
+  if (alphaTicker && hasKeyword && alphaTicker.length >= 2) {
+    return { ticker: alphaTicker };
+  }
+
+  return null;
+}
+
+function mapInterval(raw?: string): '1m' | '5m' | '15m' | '30m' | '1h' | undefined {
+  if (!raw) return undefined;
+  const m: Record<string, '1m' | '5m' | '15m' | '30m' | '1h'> = {
+    '1': '1m', '5': '5m', '15': '15m', '30': '30m', '60': '1h',
+  };
+  return m[raw];
+}
+
+// ============================================================================
+// Agent
+// ============================================================================
+
 export class Agent {
   private readonly model: string;
   private readonly maxIterations: number;
@@ -123,6 +179,37 @@ export class Agent {
       ...historyMessages,
       new HumanMessage(query),
     ];
+
+    // -----------------------------------------------------------------------
+    // Pre-check: detect stock analysis queries and route directly to tool.
+    // DeepSeek models may not reliably call tools for stock analysis, so we
+    // bypass the LLM when the intent is clear.
+    // -----------------------------------------------------------------------
+    const stockPreflight = detectStockQuery(query);
+    if (stockPreflight) {
+      const stockTool = this.toolMap.get('stock_analyzer');
+      if (stockTool) {
+        try {
+          const control = this.signal ? { signal: this.signal } : undefined;
+          const raw = await stockTool.invoke(
+            { ticker: stockPreflight.ticker, interval: stockPreflight.interval ?? '5m' },
+            control,
+          );
+          // formatToolResult wraps in JSON — extract the data field
+          let answer = String(raw);
+          try {
+            const parsed = JSON.parse(answer);
+            if (parsed.data) answer = String(parsed.data);
+          } catch { /* not JSON, use as-is */ }
+          yield { type: 'done', answer, toolCalls: [{ tool: 'stock_analyzer', args: { ticker: stockPreflight.ticker }, result: answer }], iterations: 1, totalTime: Date.now() - startTime };
+          return;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          yield { type: 'done', answer: `股票分析出错: ${msg}`, toolCalls: [], iterations: 1, totalTime: Date.now() - startTime };
+          return;
+        }
+      }
+    }
 
     // Optional: decompose complex queries via the planner
     if (this.usePlanner && shouldUsePlanner(query)) {
