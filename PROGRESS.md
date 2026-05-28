@@ -129,10 +129,40 @@ All plans had valid dependency graphs, correct tool names, and appropriate step 
 
 ---
 
+## Phase 4 — Financial Data Tools Verification ✅
+
+**Commit:** `c353624` | **Status:** Verified with real Financial Datasets API (7/7 tests pass)
+
+### Bugs Fixed
+1. **`get_financials` router prompt** — referenced nonexistent tool `get_financial_metrics_snapshot` → corrected to `get_key_ratios`
+2. **`get_market_data` router prompt** — referenced `get_stock_tickers` → corrected to `get_available_stock_tickers`; `get_crypto_tickers` → `get_available_crypto_tickers`
+3. **`formatters.ts` registry key** — `get_stock_price_snapshot` didn't match actual tool name `get_stock_price` → fixed
+4. **`callLlm` outputSchema handling** — `outputSchema` parameter was accepted but ignored; LLM response was returned as AIMessage wrapper instead of parsed JSON object. This broke `stock_screener` and `read_filings` (both use structured output). Fixed by parsing `result.content` through the Zod schema when `outputSchema` is provided.
+
+### Verification Results
+| # | Tool | Query | Result |
+|---|---|---|---|
+| 1 | get_financials | AAPL key metrics | ✓ Market Cap 4.5T, margins, D/E (3.7s) |
+| 2 | get_financials | MSFT 3-year income | ✓ 281.7B/245.1B/211.9B revenue (3.1s) |
+| 3 | get_market_data | NVDA stock price | ✓ $214.30 (3.2s) |
+| 4 | get_market_data | TSLA news | ✓ Real headlines from May 2026 (2.4s) |
+| 5 | stock_screener | Tech P/E<30, growth>10% | ✓ Filters parsed correctly (11.6s) |
+| 6 | stock_screener | Healthcare ROE>15% | ✓ Filters parsed correctly (8.3s) |
+| 7 | read_filings | AAPL 10-K risk factors | ✓ Item 1A content from SEC retrieved (11.2s) |
+
+All 4 meta-tools verified: LLM routing → sub-tool selection → API call → formatter pipeline works end-to-end.
+
+### Key Architecture Decisions
+1. **Meta-tool pattern** — each tool (`get_financials`, `get_market_data`, `read_filings`, `stock_screener`) is an LLM-powered router: natural language query → sub-tool selection → parallel execution → formatted output
+2. **Formatter layer** — raw API JSON is converted to compact markdown tables by type-specific formatters, reducing token usage 5-10x
+3. **API caching** — immutable data (historical prices, SEC filings) cached with TTL; mutable data (snapshots) cached short-term
+4. **Data source** — single source (Financial Datasets API) with `/financials/`, `/prices/`, `/filings/`, `/crypto/` endpoints; architecture supports adding more sources
+
+---
+
 ## Upcoming Phases
 | # | Goal |
 |---|---|
-| 4 | Financial Data Tools — multi-source data layer |
 | 5 | Agent Executor + Self-Validation Loop |
 | 6 | CLI UI — Ink v5 multi-panel terminal interface |
 | 7 | Local Memory (SQLite + vector search) + Report Export |
