@@ -421,19 +421,21 @@ Output: Full SEC Item 1A text
 
 1. Clone and install:
 ```bash
-git clone <repo-url>
-cd dexter-2026.5.20
+git clone https://github.com/jayome7088-rgb/quant-agent.git
+cd quant-agent
 bun install
 ```
 
 2. Configure `.env`:
 ```bash
-cp env.example .env
+cp .env.example .env
 ```
+Edit `.env` with your API keys:
 ```bash
 LLM_PROVIDER=deepseek
 DEEPSEEK_API_KEY=sk-your-key-here
 FINANCIAL_DATASETS_API_KEY=your-key-here  # free at financialdatasets.ai
+# DEXTER_WEB_PORT=3100                     # uncomment to change web UI port
 ```
 
 3. Verify all layers:
