@@ -1,9 +1,16 @@
 #!/usr/bin/env bun
 import { config } from 'dotenv';
-
-// Load environment variables
 config({ quiet: true });
 
-// TODO Phase 6: CLI interface (Ink v5)
-console.log('Dexter Pro — autonomous financial research agent');
-console.log('CLI coming in Phase 6.');
+import React from 'react';
+import { render } from 'ink';
+import { App } from './ui/app.js';
+
+const { unmount } = render(
+  React.createElement(App),
+  { exitOnCtrlC: true },
+);
+
+process.on('exit', () => {
+  unmount();
+});
