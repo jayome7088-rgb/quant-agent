@@ -101,10 +101,10 @@ Given a user's natural language query about market data, call the appropriate to
 3. **Tool Selection**:
    - For a current stock quote/snapshot (price, market cap, volume) → get_stock_price
    - For historical stock prices over a date range → get_stock_prices
-   - For "what stocks are available" or ticker lookup → get_stock_tickers
+   - For "what stocks are available" or ticker lookup → get_available_stock_tickers
    - For a current crypto price/snapshot → get_crypto_price_snapshot
    - For historical crypto prices over a date range → get_crypto_prices
-   - For "what cryptos are available" or crypto ticker lookup → get_crypto_tickers
+   - For "what cryptos are available" or crypto ticker lookup → get_available_crypto_tickers
    - For company-specific news, catalysts, recent announcements → get_company_news with ticker
    - For broad market news (macro, rates, earnings, geopolitics) → get_company_news without ticker
    - For insider buying/selling activity → get_insider_trades

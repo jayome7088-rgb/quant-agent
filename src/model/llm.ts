@@ -163,7 +163,7 @@ function chatResultToAIMessage(result: {
 // ---------------------------------------------------------------------------
 
 export interface LlmResult {
-  response: AIMessage | string;
+  response: AIMessage | string | Record<string, unknown>;
   usage?: AgentTokenUsage;
 }
 
@@ -209,6 +209,22 @@ export async function callLlm(
       response: result.content,
       usage: result.usage,
     };
+  }
+
+  // With outputSchema (no tools): parse JSON content through schema, return validated object
+  if (options.outputSchema && !options.tools?.length) {
+    try {
+      const content = result.content.trim();
+      const json = JSON.parse(content) as unknown;
+      const validated = options.outputSchema.parse(json) as Record<string, unknown>;
+      return {
+        response: validated,
+        usage: result.usage,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Structured output validation failed: ${message}. Raw content: ${result.content.slice(0, 300)}`);
+    }
   }
 
   // With tools: return full AIMessage preserving tool_calls

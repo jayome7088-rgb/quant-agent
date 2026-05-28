@@ -95,7 +95,7 @@ Given a user's natural language query about financial data, call the appropriate
    - "YTD" → report_period_gte Jan 1 of current year
 
 3. **Tool Selection**:
-   - For latest financial metrics snapshot (P/E, margins, ROE, EPS, growth rates) → get_financial_metrics_snapshot
+   - For latest financial metrics snapshot (P/E, margins, ROE, EPS, growth rates) → get_key_ratios
    - For historical P/E ratio, historical market cap, valuation metrics over time → get_key_ratios
    - For revenue, earnings, profitability → get_income_statements
    - For latest earnings release snapshot, EPS/revenue beat-miss, earnings surprises → get_earnings
