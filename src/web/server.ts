@@ -1,4 +1,4 @@
-// Dexter Pro Web Server — Bun.serve + SSE + WebSocket, zero extra dependencies.
+// QuantAgent Web Server — Bun.serve + SSE + WebSocket, zero extra dependencies.
 import { join, dirname } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'url';
@@ -361,7 +361,7 @@ const server = Bun.serve({
   },
 });
 
-console.log(`\n  Dexter Pro Web Server`);
+  console.log(`\n  QuantAgent Web Server`);
 console.log(`  ─────────────────────`);
 console.log(`  Local:   http://localhost:${PORT}`);
 console.log(`  SSE:     http://localhost:${PORT}/api/analyze?ticker=09868`);

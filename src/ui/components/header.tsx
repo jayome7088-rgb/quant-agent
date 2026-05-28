@@ -22,7 +22,7 @@ export const Header: React.FC<HeaderProps> = ({ mode, model }) => {
   return (
     <Box flexDirection="column" flexShrink={0}>
       <Box>
-        <Text bold color="cyan">Dexter Pro</Text>
+        <Text bold color="cyan">QuantAgent</Text>
         <Text color="gray"> — autonomous financial research agent</Text>
         <Text>{' '.repeat(4)}</Text>
         <Text color="gray">{model}</Text>

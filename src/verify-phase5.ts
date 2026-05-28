@@ -139,7 +139,7 @@ function printResult(r: RunResult, index: number): void {
 
 async function main(): Promise<void> {
   console.clear();
-  console.log('Dexter Pro — Phase 5 Agent Executor + Self-Validation Verification\n');
+  console.log('QuantAgent — Phase 5 Agent Executor + Self-Validation Verification\n');
 
   if (!process.env.DEEPSEEK_API_KEY?.startsWith('sk-')) {
     console.log('  ERROR: DEEPSEEK_API_KEY is not set or invalid.\n');

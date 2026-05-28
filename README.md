@@ -1,8 +1,8 @@
-# Dexter Pro 🤖
+# QuantAgent 📈
 
-Dexter Pro is an autonomous financial research agent that thinks, plans, and learns as it works. It performs analysis using task planning, self-reflection, and real-time market data. Think Claude Code, but built specifically for financial research.
+QuantAgent is an autonomous quantitative research agent that thinks, plans, and learns as it works. It performs ML-based stock analysis with XGBoost prediction, technical indicators, rolling backtest, and real-time market data. Think Claude Code, but built specifically for quantitative finance.
 
-> **Forked from [virattt/dexter](https://github.com/virattt/dexter)** (MIT, ~25K stars) — rearchitected with native OpenAI SDK streaming, DeepSeek V4 Pro as the default LLM, and a lighter dependency footprint (24→9 runtime packages).
+> **Forked from [virattt/dexter](https://github.com/virattt/dexter)** (MIT, ~25K stars) — rearchitected with native OpenAI SDK streaming, DeepSeek V4 Pro as the default LLM, East Money (东方财富) for China-accessible data, and a full ML quant pipeline.
 
 ---
 
@@ -149,7 +149,7 @@ sequenceDiagram
 
 ## Event System
 
-Dexter Pro emits richly-typed events throughout the agent lifecycle, enabling real-time UI rendering.
+QuantAgent emits richly-typed events throughout the agent lifecycle, enabling real-time UI rendering.
 
 ### Event Catalog (20 types)
 
@@ -209,7 +209,7 @@ done ← plan_complete (or warnings if incomplete)  Validation Gate
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│  Dexter Pro — autonomous financial research agent           deepseek-v4-pro  │
+│  QuantAgent — autonomous quantitative research agent          deepseek-v4-pro  │
 │  ═══════════════════════════════════════════════════════════════════════════ │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │

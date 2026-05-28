@@ -11,7 +11,7 @@ if (!process.env.DEEPSEEK_API_KEY?.startsWith('sk-')) {
   process.exit(1);
 }
 
-console.log('Starting Dexter Pro CLI UI...');
+console.log('Starting QuantAgent CLI UI...');
 console.log('Type a query and press Enter. Press Ctrl+C to exit.\n');
 
 const { unmount } = render(React.createElement(App), {

@@ -1,11 +1,11 @@
 {
-  "name": "dexter-pro",
+  "name": "quant-agent",
   "version": "0.1.0",
-  "description": "Dexter Pro — autonomous AI agent for deep financial research. A refined fork of virattt/dexter.",
+  "description": "QuantAgent — autonomous AI agent for quantitative financial research. A refined fork of virattt/dexter.",
   "type": "module",
   "main": "src/index.tsx",
   "bin": {
-    "dexter-pro": "./src/index.tsx"
+    "quant-agent": "./src/index.tsx"
   },
   "scripts": {
     "start": "bun run src/index.tsx",

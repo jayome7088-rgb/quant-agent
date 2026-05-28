@@ -116,7 +116,7 @@ const screenStocks = createScreenStocks(DEFAULT_MODEL);
 
 async function main(): Promise<void> {
   console.clear();
-  console.log('Dexter Pro — Phase 4 Financial Tools Verification\n');
+  console.log('QuantAgent — Phase 4 Financial Tools Verification\n');
   console.log(`  Router model : ${DEFAULT_MODEL}`);
   console.log(`  Data source  : Financial Datasets API`);
 

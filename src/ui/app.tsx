@@ -83,7 +83,7 @@ export const App: React.FC = () => {
         <Header mode="idle" model={DEFAULT_MODEL} />
         <Box flexGrow={1} paddingY={1}>
           <Box flexDirection="column">
-            <Text>Dexter Pro -- autonomous financial research agent</Text>
+            <Text>QuantAgent -- autonomous financial research agent</Text>
             <Text color="gray">Enter a financial research question below.</Text>
           </Box>
         </Box>

@@ -1,4 +1,4 @@
-# Dexter Pro — Development Progress
+# QuantAgent — Development Progress
 
 > Base: [virattt/dexter](https://github.com/virattt/dexter) (MIT License, ~25K stars)
 > Started: 2026-05-23

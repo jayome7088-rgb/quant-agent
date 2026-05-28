@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Dexter Pro — Financial AI Agent</title>
+<title>QuantAgent — Financial AI Agent</title>
 <style>
   :root {
     --bg: #0d1117;
@@ -442,7 +442,7 @@
   <div class="tab-panel active" id="panel-chat">
     <div class="chat-container">
       <div class="chat-messages" id="chatMessages">
-        <div class="empty-state">向 Dexter Pro 提问，例如「帮我分析 AAPL 的财务状况」</div>
+        <div class="empty-state">向 QuantAgent 提问，例如「帮我分析 AAPL 的财务状况」</div>
       </div>
       <div class="api-key-row">
         <label>Provider:</label>
@@ -611,7 +611,7 @@ function restoreChat() {
   const container = document.getElementById('chatMessages');
   container.innerHTML = '';
   if (chatHistory.length === 0) {
-    container.innerHTML = '<div class="empty-state">向 Dexter Pro 提问，例如「帮我分析 AAPL 的财务状况」</div>';
+    container.innerHTML = '<div class="empty-state">向 QuantAgent 提问，例如「帮我分析 AAPL 的财务状况」</div>';
     return;
   }
   for (const m of chatHistory) {

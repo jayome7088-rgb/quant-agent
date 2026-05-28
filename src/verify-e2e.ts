@@ -173,7 +173,7 @@ async function runQuery(query: string, label: string, toolsAvailable: boolean): 
 
 async function main(): Promise<void> {
   console.clear();
-  console.log('Dexter Pro — Phase 2 E2E Verification\n');
+  console.log('QuantAgent — Phase 2 E2E Verification\n');
   console.log(`  Provider : ${process.env.LLM_PROVIDER ?? 'deepseek'}`);
   console.log(`  Model    : deepseek-v4-pro`);
 
