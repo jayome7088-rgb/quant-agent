@@ -201,6 +201,8 @@ export interface StreamProgressEvent {
   type: 'stream_progress';
   charDelta: number;
   mode: StreamMode;
+  /** The actual text delta for this chunk, if available. */
+  text?: string;
 }
 
 /**
