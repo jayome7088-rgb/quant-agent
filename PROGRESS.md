@@ -69,7 +69,7 @@ bun run typecheck    # tsc --noEmit: 0 errors
 
 ## Phase 2 — Agent Loop E2E Verification ✅
 
-**Commit:** `(pending)` | **Status:** Verified with real DeepSeek V4 Pro API
+**Commit:** `7c88175` | **Status:** Verified with real DeepSeek V4 Pro API
 
 ### Changes Made
 - Fixed `agent.ts:23` — removed local `DEFAULT_MODEL = 'gpt-5.5'`, now imports from `model/llm.ts` (`deepseek-v4-pro`)
@@ -91,10 +91,47 @@ bun run typecheck    # tsc --noEmit: 0 errors
 
 ---
 
+## Phase 3 — Task Planner ✅
+
+**Commit:** `526f435` | **Status:** Verified with real DeepSeek V4 Pro API (3/3 tests pass)
+
+### Changes Made
+
+#### New Planner Module (`src/planner/`)
+| File | Purpose |
+|---|---|
+| `types.ts` | `ResearchPlan` / `ResearchStep` interfaces, `RawPlanSchema` (Zod v4), `normalizePlan()` fills in defaults |
+| `planner.ts` | `createPlan(query, modelSpec)` — calls LLM to decompose financial query into steps. Fast model first, fallback to main. Handles markdown-fenced and bare JSON. |
+| `validator.ts` | `validatePlan(plan)` — checks duplicate IDs, missing deps, DFS cycle detection. `PlanValidationError` with structured errors + warnings. |
+| `index.ts` | Barrel exports. |
+
+#### Modified Files
+- `src/agent/prompts.ts` — added "Research Planning" section between Tool Usage Policy and Skills, instructing the agent to decompose multi-step queries, sequence data-fetching before analysis, and think aloud.
+
+#### New Verification Script
+- `src/verify-planner.ts` — runs 3 increasingly complex queries through `createPlan()`, validates structure (IDs, deps, tool names, step count).
+
+### Verification Results
+| Test | Query | Steps | Time |
+|---|---|---|---|
+| Multi-company comparison | AAPL vs MSFT revenue growth + margins | 5 | 28.9s |
+| Stock screening | Tech P/E<20, growth>15%, cap>50B | 3 | 42.4s |
+| Single company deep dive | NVDA PEG vs semiconductor avg | 3 | 28.3s |
+
+All plans had valid dependency graphs, correct tool names, and appropriate step counts (3-5).
+
+### Key Architecture Decisions
+1. **LLM-driven decomposition** — the planner calls DeepSeek V4 Pro to generate the plan, no hand-crafted rules.
+2. **Two-attempt retry** — first try uses fast model; on JSON parse failure, falls back to the main model.
+3. **DFS cycle detection** — validates dependency graph before returning plan to agent.
+4. **Tool-aware** — planner prompt includes full tool list, so generated plans reference real tool names.
+5. **No streaming for plans** — planning is blocking (single `chat()` call), since the result is needed before execution begins.
+
+---
+
 ## Upcoming Phases
 | # | Goal |
 |---|---|
-| 3 | Task Planner — structured research step decomposition |
 | 4 | Financial Data Tools — multi-source data layer |
 | 5 | Agent Executor + Self-Validation Loop |
 | 6 | CLI UI — Ink v5 multi-panel terminal interface |
