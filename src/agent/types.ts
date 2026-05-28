@@ -58,6 +58,8 @@ export interface AgentConfig {
   memoryEnabled?: boolean;
   /** Message queue for mid-run injection of new user messages. */
   messageQueue?: MessageQueue;
+  /** Enable LLM-driven query decomposition for complex queries (default: true). */
+  usePlanner?: boolean;
 }
 
 /**
@@ -262,6 +264,45 @@ export interface DoneEvent {
 }
 
 /**
+ * Plan was generated for the current query.
+ */
+export interface PlanStartEvent {
+  type: 'plan_start';
+  summary: string;
+  stepCount: number;
+}
+
+/**
+ * A plan step was advanced (completed or skipped).
+ */
+export interface PlanStepEvent {
+  type: 'plan_step';
+  stepId: string;
+  goal: string;
+  status: 'done' | 'skipped' | 'running' | 'pending' | 'failed';
+  progress: string;
+}
+
+/**
+ * All plan steps are complete.
+ */
+export interface PlanCompleteEvent {
+  type: 'plan_complete';
+  totalSteps: number;
+  completedSteps: number;
+  planTimeMs: number;
+}
+
+/**
+ * Self-validation check result.
+ */
+export interface SelfValidationEvent {
+  type: 'self_validation';
+  sufficient: boolean;
+  reasoning: string;
+}
+
+/**
  * Union type for all agent events
  */
 export type AgentEvent =
@@ -280,6 +321,10 @@ export type AgentEvent =
   | MemoryRecalledEvent
   | MemoryFlushEvent
   | StreamProgressEvent
+  | PlanStartEvent
+  | PlanStepEvent
+  | PlanCompleteEvent
+  | SelfValidationEvent
   | DoneEvent;
 
 /**

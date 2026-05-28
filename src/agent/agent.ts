@@ -18,6 +18,7 @@ import { AgentToolExecutor } from './tool-executor.js';
 import { MemoryManager } from '../memory/index.js';
 import { runMemoryFlush, shouldRunMemoryFlush } from '../memory/flush.js';
 import { resolveProvider } from '../providers.js';
+import { PlanExecutor, shouldUsePlanner } from './plan-executor.js';
 
 
 const DEFAULT_MAX_ITERATIONS = 10;
@@ -43,6 +44,8 @@ export class Agent {
   private readonly signal?: AbortSignal;
   private readonly memoryEnabled: boolean;
   private readonly messageQueue?: MessageQueue;
+  private readonly usePlanner: boolean;
+  private planExecutor?: PlanExecutor;
   private compactionFailures: number = 0;
 
   private constructor(
@@ -66,6 +69,7 @@ export class Agent {
     this.signal = config.signal;
     this.memoryEnabled = config.memoryEnabled ?? true;
     this.messageQueue = config.messageQueue;
+    this.usePlanner = config.usePlanner ?? true;
   }
 
   static async create(config: AgentConfig = {}): Promise<Agent> {
@@ -119,6 +123,35 @@ export class Agent {
       ...historyMessages,
       new HumanMessage(query),
     ];
+
+    // Optional: decompose complex queries via the planner
+    if (this.usePlanner && shouldUsePlanner(query)) {
+      try {
+        this.planExecutor = await PlanExecutor.fromQuery(query, this.model);
+        yield {
+          type: 'plan_start',
+          summary: this.planExecutor.plan.summary,
+          stepCount: this.planExecutor.plan.steps.length,
+        };
+        // Emit initial step
+        const firstStep = this.planExecutor.currentStep;
+        if (firstStep) {
+          yield {
+            type: 'plan_step',
+            stepId: firstStep.id,
+            goal: firstStep.goal,
+            status: 'running',
+            progress: this.planExecutor.progress,
+          };
+        }
+        // Inject plan as a system-level instruction before the user query
+        messages.splice(1, 0, new SystemMessage(
+          `You have been given a research plan. Execute each step that requires a tool call. Analysis-only steps (tool="none") should be handled after their dependencies complete.\n\n${this.planExecutor.formatForPrompt()}`,
+        ));
+      } catch {
+        // Planner failed — continue without plan (don't block the query)
+      }
+    }
 
     // Main agent loop
     let overflowRetries = 0;
@@ -230,6 +263,37 @@ export class Agent {
           tokensPerSecond: ctx.tokenCounter.getTokensPerSecond(totalTime),
         };
         return;
+      }
+
+      // Advance plan step after successful tool execution
+      if (this.planExecutor && !this.planExecutor.isComplete) {
+        const step = this.planExecutor.currentStep;
+        if (step) {
+          const anySuccess = toolMessages.some(tm => {
+            const content = typeof tm.content === 'string' ? tm.content : '';
+            return content.length > 0 && !content.startsWith('Error:');
+          });
+          if (anySuccess) {
+            this.planExecutor.advance();
+          } else {
+            this.planExecutor.skip('Tool execution failed');
+          }
+          yield {
+            type: 'plan_step',
+            stepId: this.planExecutor.currentStep?.id ?? step.id,
+            goal: this.planExecutor.currentStep?.goal ?? step.goal,
+            status: this.planExecutor.currentStep?.status ?? 'done',
+            progress: this.planExecutor.progress,
+          };
+          if (this.planExecutor.isComplete) {
+            yield {
+              type: 'plan_complete',
+              totalSteps: this.planExecutor.plan.steps.length,
+              completedSteps: this.planExecutor.plan.steps.filter(s => s.status === 'done').length,
+              planTimeMs: this.planExecutor.elapsedMs(),
+            };
+          }
+        }
       }
 
       // Context threshold management (may compact the message array)
@@ -432,9 +496,35 @@ export class Agent {
     ctx: RunContext,
   ): AsyncGenerator<AgentEvent, void> {
     const totalTime = Date.now() - ctx.startTime;
+
+    // Self-validation: check if the response is substantive
+    const hasTools = ctx.scratchpad.hasToolResults();
+    const responseLen = responseText.trim().length;
+    const sufficient = hasTools || responseLen > 50;
+    const reasoning = sufficient
+      ? (hasTools ? 'Backed by tool data' : 'Direct answer')
+      : 'Response may be too brief';
+
+    yield {
+      type: 'self_validation',
+      sufficient,
+      reasoning,
+    };
+
+    // If plan was used but not complete, note it in the answer
+    let answer = responseText;
+    if (this.planExecutor && !this.planExecutor.isComplete) {
+      const remaining = this.planExecutor.plan.steps.filter(
+        s => s.status === 'pending' || s.status === 'running',
+      ).length;
+      if (remaining > 0) {
+        answer += `\n\n> Note: ${remaining} planned research step(s) were not completed. The analysis may be incomplete.`;
+      }
+    }
+
     yield {
       type: 'done',
-      answer: responseText,
+      answer,
       toolCalls: ctx.scratchpad.getToolCallRecords(),
       iterations: ctx.iteration,
       totalTime,
