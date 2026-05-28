@@ -6,6 +6,8 @@ const SETTINGS_FILE = dexterPath('settings.json');
 
 // Map legacy model IDs to provider IDs for migration
 const MODEL_TO_PROVIDER_MAP: Record<string, string> = {
+  'deepseek-v4-pro': 'deepseek',
+  'deepseek-v4-flash': 'deepseek',
   'gpt-5.5': 'openai',
   'gpt-5.4': 'openai',
   'gpt-5.2': 'openai',
