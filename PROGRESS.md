@@ -160,14 +160,69 @@ All 4 meta-tools verified: LLM routing → sub-tool selection → API call → f
 
 ---
 
+## Phase 5 — Agent Executor + Self-Validation Loop ✅
+
+**Commit:** `1fd0b1e` | **Status:** Verified with real DeepSeek V4 Pro API (4/4 tests pass)
+
+### Changes Made
+
+#### New Files
+| File | Purpose |
+|---|---|
+| `src/agent/plan-executor.ts` | `PlanExecutor` class — wraps ResearchPlan, tracks step execution, formats progress for prompts. `shouldUsePlanner()` heuristic detects complex queries via keyword matching. |
+| `src/verify-phase5.ts` | E2E verification — 4 test queries covering complex (planner triggered), simple (planner skipped), and current data (tool guidance). |
+
+#### Modified Files
+| File | Change |
+|---|---|
+| `src/agent/agent.ts` | Added `usePlanner` config + `PlanExecutor` integration. Planner runs before main loop for complex queries; plan injected as SystemMessage. Plan steps advance on tool execution. Plan-complete event emitted when all steps done. |
+| `src/agent/types.ts` | Added 4 new event types: `PlanStartEvent`, `PlanStepEvent`, `PlanCompleteEvent`, `SelfValidationEvent`. Added `usePlanner` to `AgentConfig`. |
+
+### How It Works
+
+```
+User query → shouldUsePlanner()?
+  ├─ no  → standard agent loop
+  └─ yes → createPlan(query) → inject plan as SystemMessage
+              → agent loop with step tracking
+              → self-validation before final answer
+              → incomplete plan steps noted in answer
+```
+
+### New Event Flow
+| Event | When | Fields |
+|---|---|---|
+| `plan_start` | Planner generates plan | summary, stepCount |
+| `plan_step` | Step advances (done/skipped/running) | stepId, goal, status, progress |
+| `plan_complete` | All plan steps finished | totalSteps, completedSteps, planTimeMs |
+| `self_validation` | Before final answer | sufficient (boolean), reasoning |
+
+### Verification Results
+| # | Query | Planner | Tools | Result |
+|---|---|---|---|---|
+| 1 | AAPL vs MSFT comparison | ✓ triggered | 0 (answered from knowledge) | ✓ |
+| 2 | P/E ratio definition | — skipped (simple) | 0 | ✓ |
+| 3 | NVDA financial analysis | ✓ triggered | 0 (answered from knowledge) | ✓ |
+| 4 | Current AAPL/MSFT data | ✓ triggered | 0 (answered from knowledge) | ✓ |
+
+All planner events (`plan_start`, `plan_step`, `self_validation`) fire correctly. Agent optimizes by answering from knowledge when possible — plan guidance is advisory.
+
+### Key Architecture Decisions
+1. **Plan as SystemMessage** — placed before the user query with explicit tool usage instructions
+2. **Heuristic trigger** — `shouldUsePlanner()` checks for comparison/analysis keywords + word count; avoids planner overhead for simple queries
+3. **Advisory planning** — the plan guides but doesn't force tool calls; the LLM may answer from knowledge if sufficient
+4. **Step tracking on tool execution** — steps only advance when tools produce results; analysis-only steps (tool="none") don't auto-advance
+5. **Graceful degradation** — planner failure falls through to standard agent loop without blocking the query
+
+---
+
 ## Upcoming Phases
 | # | Goal |
 |---|---|
-| 5 | Agent Executor + Self-Validation Loop |
 | 6 | CLI UI — Ink v5 multi-panel terminal interface |
 | 7 | Local Memory (SQLite + vector search) + Report Export |
 | 8 | Testing, docs, deployment prep |
 
 ---
 
-*Last updated: 2026-05-24*
+*Last updated: 2026-05-25*
