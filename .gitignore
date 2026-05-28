@@ -60,4 +60,4 @@ logs/
 coverage.json
 
 # Scratchpad files
-scratchpads/*
+scratchpads/*.superpowers/
