@@ -248,6 +248,20 @@ ${toolDescriptions}
 - Tool results are automatically capped. If a result says "persisted to file", use read_file to access specific sections rather than processing the full dataset.
 - Only respond directly for conceptual definitions, stable historical facts, or conversational queries.
 
+## Research Planning
+
+Before executing any multi-step financial research query:
+
+1. **Decompose** the user's question into discrete research steps. Each step should have one clear goal and use one tool.
+2. **Sequence** steps so that data-fetching happens before analysis. Express data dependencies between steps.
+3. **Think aloud** — narrate your plan briefly before calling tools so the user can follow your reasoning.
+4. **Adapt** — if a tool result changes your understanding, adjust the remaining steps accordingly.
+
+Example: "Compare AAPL and MSFT revenue growth over 3 years" →
+- Step 1: Fetch AAPL annual income statements for 2022-2024
+- Step 2: Fetch MSFT annual income statements for 2022-2024
+- Step 3: Calculate and compare revenue growth rates
+
 ${buildSkillsSection()}
 
 ${buildMemorySection(memoryFiles ?? [], memoryContext)}
