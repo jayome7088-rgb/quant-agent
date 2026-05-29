@@ -451,8 +451,9 @@
           <option value="openai">OpenAI</option>
         </select>
         <label>API Key:</label>
-        <input type="password" id="apiKeyInput" placeholder="输入 API Key（留空使用服务器配置）…">
+        <input type="password" id="apiKeyInput" placeholder="请输入你的 DeepSeek 或 OpenAI API Key…" style="flex:2;">
         <button class="btn-ghost" onclick="saveApiKey()" style="font-size:12px;padding:4px 10px;">保存</button>
+        <span style="font-size:11px;color:var(--red);white-space:nowrap;">*必填</span>
       </div>
       <div class="chat-input-row">
         <input type="text" id="chatInput" placeholder="输入你的问题…" autofocus>
@@ -644,6 +645,13 @@ async function sendChat() {
   const query = input.value.trim();
   if (!query) return;
 
+  // Require API key
+  const apiKey = document.getElementById('apiKeyInput').value.trim();
+  if (!apiKey) {
+    addChatMessage('error', '请先在下方输入你的 API Key（DeepSeek 或 OpenAI）');
+    return;
+  }
+
   const btn = document.getElementById('chatSendBtn');
   input.disabled = true;
   btn.disabled = true;
@@ -664,8 +672,6 @@ async function sendChat() {
 
   let assistantContent = '';
 
-  // Get API key
-  const apiKey = document.getElementById('apiKeyInput').value.trim();
   const provider = document.getElementById('apiProvider').value;
 
   // Kill previous
@@ -675,7 +681,7 @@ async function sendChat() {
     const resp = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, apiKey: apiKey || undefined, provider: apiKey ? provider : undefined }),
+      body: JSON.stringify({ query, apiKey, provider }),
     });
 
     const reader = resp.body.getReader();
@@ -773,9 +779,28 @@ function startAnalysis() {
     try { const d = JSON.parse(e.data); addLog(d.message, 'stage'); } catch {}
   });
 
-  currentSSE.addEventListener('result', (e) => { result.textContent = e.data; });
+  // Collect plot images
+  let plotImages = {};
+  currentSSE.addEventListener('plot', (e) => {
+    try {
+      const d = JSON.parse(e.data);
+      plotImages[d.chart_type] = d.data_url;
+    } catch {}
+  });
+
+  currentSSE.addEventListener('result', (e) => {
+    // Build HTML: plots as images + text result
+    let html = '';
+    for (const [chartType, dataUrl] of Object.entries(plotImages)) {
+      html += `<div style="margin:12px 0;"><img src="${dataUrl}" alt="${chartType}" style="max-width:100%;border:1px solid var(--border);border-radius:4px;"></div>`;
+    }
+    html += `<pre style="margin:0;white-space:pre-wrap;font-family:var(--mono);font-size:13px;line-height:1.5;">${escHtml(e.data)}</pre>`;
+    result.innerHTML = html;
+  });
 
   currentSSE.addEventListener('done', () => {
+    plotImages = {};
+    btn.disabled = false;
     btn.disabled = false;
     currentSSE?.close();
     currentSSE = null;

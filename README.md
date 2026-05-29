@@ -41,6 +41,23 @@ bun run web             # Web 服务器 (默认 http://localhost:3100)
 
 Web 界面打开后，可以直接在搜索框输入股票代码（如 `AAPL`、`09868`），点击「分析」触发完整 ML 分析流程；也可以在聊天页与 Agent 进行多轮对话。
 
+### Python 依赖 (ML 分析 + 图表)
+
+`stock_analyzer` 工具依赖 Python 3.12+ 运行 XGBoost 训练和 Seaborn 图表生成：
+
+```bash
+# XGBoost 训练
+pip install xgboost numpy
+
+# Seaborn 图表 (plot_chart.py)
+pip install seaborn matplotlib
+
+# 可选: K 线图支持
+pip install mplfinance pandas
+```
+
+> 未安装 mplfinance 时会自动降级为折线图，不影响其他功能。
+
 ## 🙏 致谢
 
 本项目灵感来源于 [virattt/dexter](https://github.com/virattt/dexter)（MIT License），在其基础架构上进行了重大扩展：用 TypeScript + Bun 重写核心、新增 ML 预测与回测引擎、集成东方财富数据源、增加 Web 仪表盘和策略配置系统。同样以 MIT 协议开源。

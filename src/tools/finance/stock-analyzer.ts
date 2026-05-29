@@ -6,8 +6,9 @@ import { normalizeTicker, fetchChart, fetchQuote, OHLCVBar } from './eastmoney-a
 import { computeIndicators, extractTrainingMatrix, MODEL_FEATURE_NAMES } from './indicator-engine.js';
 import { trainXGBoost } from './xgb-bridge.js';
 import { runBacktest } from './backtest-engine.js';
-import { formatStockAnalysis } from './output-formatter.js';
+import { formatStockAnalysis, buildPlotData } from './output-formatter.js';
 import { loadStrategyConfig } from './strategy-config.js';
+import { resolvePlotPlaceholders, stripPlotPlaceholders } from './plot-bridge.js';
 
 export const STOCK_ANALYZER_DESCRIPTION = `
 Performs comprehensive stock technical analysis including intraday data, technical indicators, machine learning prediction, and backtesting. Use when the user asks for stock analysis, trends, buy/sell recommendations, valuation, or trading signals.
@@ -205,13 +206,27 @@ export function createStockAnalyzer(): DynamicStructuredTool {
 
       let formatted = formatStockAnalysis(analysisOutput);
 
+      // 10. Generate charts
+      let plotDataUrls: Record<string, string> = {};
+      try {
+        onProgress?.('Generating charts...');
+        const plotData = buildPlotData(analysisOutput);
+        const resolved = await resolvePlotPlaceholders(formatted, plotData);
+        formatted = resolved.text;
+        plotDataUrls = Object.fromEntries(resolved.plots);
+      } catch {
+        // Chart generation failed — strip placeholders and continue
+        formatted = stripPlotPlaceholders(formatted);
+      }
+
       if (useSynthetic) {
         formatted = `⚠️  **注意：东方财富 API 暂时不可用，当前使用合成数据演示。**\n\n${formatted}`;
       }
 
-      return formatToolResult(formatted, [
-        `https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}`,
-      ]);
+      return formatToolResult(
+        { data: formatted, plots: plotDataUrls },
+        [`https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}`],
+      );
     },
   });
 }

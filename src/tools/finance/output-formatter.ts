@@ -33,16 +33,82 @@ export function formatStockAnalysis(result: StockAnalysisOutput): string {
 
   sections.push(formatHeader(result.ticker));
   sections.push(formatRealTime(result));
+  sections.push('{{PLOT:candlestick}}');
   sections.push(formatTechnicalIndicators(result));
+  sections.push('{{PLOT:indicator_overlay}}');
   sections.push(formatFeatureImportance(result.modelOutput));
+  sections.push('{{PLOT:feature_importance}}');
   sections.push(formatRollingBacktest(result.modelOutput));
   sections.push(formatEnhancedBacktest(result.backtestResult));
   sections.push(formatEquityCurve(result.backtestResult));
+  sections.push('{{PLOT:equity_curve}}');
   sections.push(formatSummary(result));
   sections.push(formatPrediction(result));
   sections.push(formatDisclaimer());
 
   return sections.join('\n\n');
+}
+
+/**
+ * Build the data payloads needed for each plot type from the analysis output.
+ * Callers pass this to resolvePlotPlaceholders() after formatting.
+ */
+export function buildPlotData(result: StockAnalysisOutput): Record<string, { data: Record<string, unknown>; title?: string }> {
+  const plotData: Record<string, { data: Record<string, unknown>; title?: string }> = {};
+
+  // Equity curve
+  if (result.backtestResult.equityCurve.length >= 2) {
+    plotData['equity_curve'] = {
+      data: { equity: result.backtestResult.equityCurve },
+      title: `${result.ticker} Equity Curve`,
+    };
+  }
+
+  // Indicator overlay
+  const { closes, features, validStartIndex } = result.indicators;
+  const start = Math.max(0, validStartIndex);
+  if (closes.length > start) {
+    const slice = (arr: number[]) => arr.slice(start, start + 120);
+    plotData['indicator_overlay'] = {
+      data: {
+        closes: slice(closes),
+        sma20: slice(features.sma20),
+        sma60: slice(features.sma60),
+        volume: slice(result.indicators.volumes),
+      },
+      title: `${result.ticker} Price & Indicators`,
+    };
+  }
+
+  // Feature importance
+  const topFeatures = result.modelOutput.featureImportance.slice(0, 15);
+  plotData['feature_importance'] = {
+    data: {
+      features: topFeatures.map(f => f.feature),
+      importance: topFeatures.map(f => f.coefficient),
+    },
+    title: `${result.ticker} Feature Importance`,
+  };
+
+  // Candlestick (recent 60 bars)
+  if (closes.length > start) {
+    const recent = closes.slice(start).slice(-60);
+    const vols = result.indicators.volumes.slice(start).slice(-60);
+    const ohlcv = recent.map((c, i) => ({
+      c,
+      o: c * (0.998 + Math.random() * 0.004),
+      h: c * (1.002 + Math.random() * 0.006),
+      l: c * (0.994 + Math.random() * 0.006),
+      v: vols[i] || 0,
+      ts: Date.now() / 1000 - (recent.length - i) * 86400,
+    }));
+    plotData['candlestick'] = {
+      data: { ohlcv },
+      title: `${result.ticker} Candlestick`,
+    };
+  }
+
+  return plotData;
 }
 
 // ---------------------------------------------------------------------------

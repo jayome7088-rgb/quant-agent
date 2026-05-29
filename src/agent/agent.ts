@@ -199,7 +199,10 @@ export class Agent {
           let answer = String(raw);
           try {
             const parsed = JSON.parse(answer);
-            if (parsed.data) answer = String(parsed.data);
+            if (parsed.data) {
+              // data may be a string (legacy) or {data, plots} object
+              answer = typeof parsed.data === 'string' ? parsed.data : String(parsed.data.data || parsed.data);
+            }
           } catch { /* not JSON, use as-is */ }
           yield { type: 'done', answer, toolCalls: [{ tool: 'stock_analyzer', args: { ticker: stockPreflight.ticker }, result: answer }], iterations: 1, totalTime: Date.now() - startTime };
           return;

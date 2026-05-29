@@ -69,10 +69,23 @@ async function handleAnalyzeSSE(url: URL): Promise<Response> {
         );
 
         let text = String(result);
+        let plots: Record<string, string> = {};
         try {
           const parsed = JSON.parse(text);
-          if (parsed.data) text = String(parsed.data);
+          if (parsed.data) {
+            if (typeof parsed.data === 'string') {
+              text = parsed.data;
+            } else {
+              text = String(parsed.data.data || '');
+              plots = parsed.data.plots || {};
+            }
+          }
         } catch { /* not JSON wrapped */ }
+
+        // Emit plot events for each chart
+        for (const [chartType, dataUrl] of Object.entries(plots)) {
+          send('plot', JSON.stringify({ chart_type: chartType, data_url: dataUrl }));
+        }
 
         finalResult = text;
         send('result', text);
@@ -119,18 +132,22 @@ async function handleChat(req: Request): Promise<Response> {
     return jsonResponse({ error: 'Missing query' }, 400);
   }
 
-  // Override API key if client provided one
-  let prevKey = '';
-  let keyEnv = '';
-  if (apiKey && provider) {
-    const { Providers } = await import('../model/providers.js');
-    const cfg = Providers[provider.toLowerCase()];
-    if (cfg) {
-      keyEnv = cfg.apiKeyEnv;
-      prevKey = process.env[keyEnv] || '';
-      process.env[keyEnv] = apiKey;
-    }
+  // Require user's own API key — no server default
+  if (!apiKey?.trim()) {
+    return jsonResponse({ error: '请提供你的 API Key（在聊天框下方输入）' }, 400);
   }
+
+  // Set the user's API key into env for the agent
+  const prov = provider || 'deepseek';
+  const { Providers } = await import('../model/providers.js');
+  const cfg = Providers[prov.toLowerCase()];
+  if (!cfg) {
+    return jsonResponse({ error: `Unknown provider: ${prov}` }, 400);
+  }
+
+  const keyEnv = cfg.apiKeyEnv;
+  const prevKey = process.env[keyEnv] || '';
+  process.env[keyEnv] = apiKey;
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -145,7 +162,7 @@ async function handleChat(req: Request): Promise<Response> {
         const { Agent } = await import('../agent/agent.js');
 
         const agent = await Agent.create({
-          model: provider ? `${provider}:${provider === 'deepseek' ? 'deepseek-v4-pro' : 'gpt-4o'}` : undefined,
+          model: `${prov}:${cfg.defaultModel}`,
           memoryEnabled: false,
           usePlanner: false,
         });
@@ -229,6 +246,37 @@ async function handleHistory(req: Request, url: URL): Promise<Response> {
   }
 
   return jsonResponse({ error: 'Method not allowed' }, 405);
+}
+
+async function handleChartAPI(req: Request): Promise<Response> {
+  if (req.method !== 'POST') {
+    return jsonResponse({ error: 'Use POST with JSON body' }, 405);
+  }
+
+  let body: { chart_type?: string; data?: Record<string, unknown>; title?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const { chart_type, data, title } = body;
+  if (!chart_type || !data) {
+    return jsonResponse({ error: 'Missing chart_type or data' }, 400);
+  }
+
+  try {
+    const { generateChart } = await import('../tools/finance/plot-bridge.js');
+    const result = await generateChart(
+      chart_type as 'equity_curve' | 'indicator_overlay' | 'feature_importance' | 'candlestick',
+      data,
+      title,
+    );
+    return jsonResponse({ chart_type: result.chart_type, data_url: `data:image/png;base64,${result.base64}` });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return jsonResponse({ error: msg }, 500);
+  }
 }
 
 async function handleStrategy(req: Request): Promise<Response> {
@@ -335,6 +383,11 @@ const server = Bun.serve({
       return handleHistory(req, url);
     }
 
+    // Chart generation API
+    if (url.pathname === '/api/chart') {
+      return handleChartAPI(req);
+    }
+
     // Strategy config
     if (url.pathname === '/api/strategy') {
       return handleStrategy(req);
@@ -364,8 +417,9 @@ const server = Bun.serve({
   console.log(`\n  QuantAgent Web Server`);
 console.log(`  ─────────────────────`);
 console.log(`  Local:   http://localhost:${PORT}`);
-console.log(`  SSE:     http://localhost:${PORT}/api/analyze?ticker=09868`);
+console.log(`  Analyze: http://localhost:${PORT}/api/analyze?ticker=09868`);
 console.log(`  Chat:    POST http://localhost:${PORT}/api/chat`);
+console.log(`  Chart:   POST http://localhost:${PORT}/api/chart`);
 console.log(`  History: http://localhost:${PORT}/api/history`);
 console.log(`  WS:      ws://localhost:${PORT}/ws`);
 console.log();
