@@ -784,27 +784,58 @@ function startAnalysis() {
   currentSSE.addEventListener('plot', (e) => {
     try {
       const d = JSON.parse(e.data);
-      console.log('[client] Received plot event:', d.chart_type, 'data length:', d.data_url?.length || 0);
-      plotImages[d.chart_type] = d.data_url;
+      console.log('[client] plot event received:', d.chart_type, 'data_url length:', d.data_url?.length || 0);
+      if (d.data_url && d.data_url.length > 100) {
+        plotImages[d.chart_type] = d.data_url;
+        console.log('[client] Stored plot:', d.chart_type, 'total plots:', Object.keys(plotImages).length);
+      } else {
+        console.warn('[client] plot event has empty/invalid data_url for', d.chart_type);
+      }
     } catch (err) {
-      console.error('[client] Failed to parse plot event:', err);
+      console.error('[client] Failed to parse plot event:', err, e.data);
     }
   });
 
+  currentSSE.addEventListener('plot_error', (e) => {
+    try {
+      const d = JSON.parse(e.data);
+      console.warn('[client] plot_error event:', d.chart_type, d.error);
+      addLog(`图表生成失败 (${d.chart_type}): ${d.error}`, 'error');
+    } catch {}
+  });
+
   currentSSE.addEventListener('result', (e) => {
-    console.log('[client] Result received, plots:', Object.keys(plotImages).length);
-    // Build HTML: plots as images + text result
+    const plotCount = Object.keys(plotImages).length;
+    console.log('[client] result event received, plot count:', plotCount, 'plot keys:', Object.keys(plotImages));
+
+    // Build HTML: plots as centered images + text result
     let html = '';
-    for (const [chartType, dataUrl] of Object.entries(plotImages)) {
-      html += `<div style="margin:16px 0;text-align:center;">
-        <img src="${dataUrl}" alt="${chartType}"
-             style="max-width:100%;min-width:600px;border:1px solid var(--border);border-radius:4px;"
-             onerror="this.parentElement.innerHTML='<div style=color:var(--red)>[图表加载失败: ${chartType}]</div>'">
-        <div style="font-size:11px;color:var(--muted);margin-top:4px;">${chartType}</div>
+    if (plotCount > 0) {
+      for (const [chartType, dataUrl] of Object.entries(plotImages)) {
+        const labelMap = {
+          equity_curve: '权益曲线',
+          indicator_overlay: '价格与技术指标',
+          feature_importance_bar: '特征重要性',
+          candlestick: 'K线图',
+          backtest_metrics_table: '回测指标',
+        };
+        const label = labelMap[chartType] || chartType;
+        html += `<div style="margin:20px 0;text-align:center;">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">${label}</div>
+          <img src="${dataUrl}" alt="${chartType}"
+               style="width:100%;max-width:800px;min-width:400px;height:auto;border:1px solid var(--border);border-radius:6px;display:block;margin:0 auto;"
+               onload="console.log('[client] img loaded: ${chartType}')"
+               onerror="console.error('[client] img FAILED: ${chartType}');this.style.display='none';this.insertAdjacentHTML('afterend','<div style=color:var(--red);padding:20px;text-align:center;border:1px dashed var(--red);border-radius:6px;>图表加载失败: ${chartType}<br><small>请运行 pip install matplotlib seaborn 并重启服务器</small></div>')">
+        </div>`;
+      }
+    } else {
+      html += `<div style="color:var(--yellow);padding:12px;border:1px dashed var(--yellow);border-radius:6px;margin:12px 0;text-align:center;font-size:13px;">
+        图表未生成<br><small>安装 Python 依赖: pip install matplotlib seaborn numpy</small>
       </div>`;
     }
     html += `<pre style="margin:0;white-space:pre-wrap;font-family:var(--mono);font-size:13px;line-height:1.5;">${escHtml(e.data)}</pre>`;
     result.innerHTML = html;
+    console.log('[client] result rendered, HTML length:', html.length);
   });
 
   currentSSE.addEventListener('done', () => {

@@ -75,20 +75,36 @@ async function handleAnalyzeSSE(url: URL): Promise<Response> {
           if (parsed.data) {
             if (typeof parsed.data === 'string') {
               text = parsed.data;
+              console.log('[server] Tool result data is plain string (no plots)');
             } else {
               text = String(parsed.data.data || '');
               plots = parsed.data.plots || {};
+              console.log(`[server] Extracted ${Object.keys(plots).length} plots:`, Object.keys(plots));
+              for (const [k, v] of Object.entries(plots)) {
+                console.log(`[server]   ${k}: ${typeof v === 'string' ? v.length + ' chars, starts with: ' + (v as string).slice(0, 30) : 'NOT A STRING'}`);
+              }
+            }
+          } else {
+            console.log('[server] No parsed.data field in tool result');
+          }
+        } catch (e) {
+          console.log('[server] Failed to parse tool result JSON:', e);
+        }
+
+        // Emit plot events for each chart BEFORE result event
+        if (Object.keys(plots).length > 0) {
+          for (const [chartType, dataUrl] of Object.entries(plots)) {
+            if (typeof dataUrl === 'string' && dataUrl.length > 100) {
+              console.log(`[server] Sending plot SSE event: ${chartType}, data_url length: ${dataUrl.length}`);
+              send('plot', JSON.stringify({ chart_type: chartType, data_url: dataUrl }));
+            } else {
+              console.log(`[server] SKIPPING plot ${chartType}: invalid dataUrl (len=${dataUrl?.length ?? 0})`);
+              send('plot_error', JSON.stringify({ chart_type: chartType, error: 'Invalid or empty chart data' }));
             }
           }
-        } catch { /* not JSON wrapped */ }
-
-        // Emit plot events for each chart
-        for (const [chartType, dataUrl] of Object.entries(plots)) {
-          console.log(`[server] Sending plot event: ${chartType}, data length: ${dataUrl.length}`);
-          send('plot', JSON.stringify({ chart_type: chartType, data_url: dataUrl }));
-        }
-        if (Object.keys(plots).length === 0) {
-          console.log('[server] No plots generated (Python/matplotlib may be unavailable)');
+        } else {
+          console.log('[server] No plots to send — Python/matplotlib may not be installed.');
+          console.log('[server] Install: pip install matplotlib seaborn numpy');
         }
 
         finalResult = text;
