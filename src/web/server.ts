@@ -1,8 +1,7 @@
-// QuantAgent Web Server — Bun.serve + SSE + WebSocket, zero extra dependencies.
+// QuantAgent Web Server — Bun.serve + SSE (pure), zero extra dependencies.
 import { join, dirname } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'url';
-import type { ServerWebSocket } from 'bun';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CLIENT_HTML = join(__dirname, 'client.html');
@@ -11,19 +10,29 @@ const CLIENT_HTML = join(__dirname, 'client.html');
 // SSE helpers
 // ---------------------------------------------------------------------------
 
-let sseId = 0;
-const sseClients = new Map<number, { controller: ReadableStreamDefaultController }>();
-
-function sseEncode(event: string, data: string): Uint8Array {
-  return new TextEncoder().encode(`event: ${event}\ndata: ${data}\n\n`);
+function sseEvent(event: string, data: string): string {
+  return `event: ${event}\ndata: ${data}\n\n`;
 }
 
-// WebSocket broadcasting
-const wsClients = new Set<ServerWebSocket<undefined>>();
+class SSEController {
+  private closed = false;
+  constructor(private controller: ReadableStreamDefaultController) {}
 
-function wsBroadcast(data: string): void {
-  for (const ws of wsClients) {
-    try { ws.send(data); } catch { wsClients.delete(ws); }
+  send(event: string, data: string): boolean {
+    if (this.closed) return false;
+    try {
+      this.controller.enqueue(new TextEncoder().encode(sseEvent(event, data)));
+      return true;
+    } catch {
+      this.closed = true;
+      return false;
+    }
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    try { this.controller.close(); } catch { /* ok */ }
   }
 }
 
@@ -39,35 +48,32 @@ async function handleAnalyzeSSE(url: URL): Promise<Response> {
     return new Response('Missing ticker parameter', { status: 400 });
   }
 
+  console.log(`[server] SSE analyze starting for ${ticker} (${interval})`);
+
   const stream = new ReadableStream({
     async start(controller) {
-      const client = { id: ++sseId, controller };
-      sseClients.set(client.id, client);
-
-      const send = (event: string, data: string) => {
-        try { controller.enqueue(sseEncode(event, data)); } catch { /* closed */ }
-      };
-
-      let finalResult = '';
+      const sse = new SSEController(controller);
 
       try {
         const { createStockAnalyzer } = await import('../tools/finance/stock-analyzer.js');
-
         const tool = createStockAnalyzer();
-        send('progress', JSON.stringify({ stage: 'starting', message: `开始分析 ${ticker}…` }));
+
+        sse.send('progress', JSON.stringify({ stage: 'starting', message: `开始分析 ${ticker}…` }));
+        console.log(`[server] SSE sent: progress/starting`);
 
         const result = await tool.invoke(
           { ticker, interval },
           {
             metadata: {
               onProgress: (msg: string) => {
-                send('progress', JSON.stringify({ stage: 'running', message: msg }));
-                wsBroadcast(JSON.stringify({ type: 'progress', ticker, message: msg }));
+                sse.send('progress', JSON.stringify({ stage: 'running', message: msg }));
+                console.log(`[server] SSE sent: progress/${msg.slice(0, 40)}`);
               },
             },
           },
         );
 
+        // Parse tool result
         let text = String(result);
         let plots: Record<string, string> = {};
         try {
@@ -75,162 +81,125 @@ async function handleAnalyzeSSE(url: URL): Promise<Response> {
           if (parsed.data) {
             if (typeof parsed.data === 'string') {
               text = parsed.data;
-              console.log('[server] Tool result data is plain string (no plots)');
             } else {
               text = String(parsed.data.data || '');
               plots = parsed.data.plots || {};
-              console.log(`[server] Extracted ${Object.keys(plots).length} plots:`, Object.keys(plots));
-              for (const [k, v] of Object.entries(plots)) {
-                console.log(`[server]   ${k}: ${typeof v === 'string' ? v.length + ' chars, starts with: ' + (v as string).slice(0, 30) : 'NOT A STRING'}`);
-              }
             }
+          }
+        } catch { /* plain text */ }
+
+        console.log(`[server] Tool completed. Plots: ${Object.keys(plots).length} [${Object.keys(plots).join(', ')}]`);
+
+        // Send each chart as its own named SSE event
+        for (const [chartType, dataUrl] of Object.entries(plots)) {
+          if (typeof dataUrl === 'string' && dataUrl.length > 100) {
+            console.log(`[server] SSE sending event: ${chartType}, data_url: ${dataUrl.slice(0, 50)}... (${dataUrl.length} chars)`);
+            sse.send(chartType, dataUrl);
           } else {
-            console.log('[server] No parsed.data field in tool result');
+            console.log(`[server] SSE SKIP ${chartType}: bad data_url (len=${dataUrl?.length ?? 0})`);
           }
-        } catch (e) {
-          console.log('[server] Failed to parse tool result JSON:', e);
         }
 
-        // Emit plot events for each chart BEFORE result event
-        if (Object.keys(plots).length > 0) {
-          for (const [chartType, dataUrl] of Object.entries(plots)) {
-            if (typeof dataUrl === 'string' && dataUrl.length > 100) {
-              console.log(`[server] Sending plot SSE event: ${chartType}, data_url length: ${dataUrl.length}`);
-              send('plot', JSON.stringify({ chart_type: chartType, data_url: dataUrl }));
-            } else {
-              console.log(`[server] SKIPPING plot ${chartType}: invalid dataUrl (len=${dataUrl?.length ?? 0})`);
-              send('plot_error', JSON.stringify({ chart_type: chartType, error: 'Invalid or empty chart data' }));
-            }
-          }
-        } else {
-          console.log('[server] No plots to send — Python/matplotlib may not be installed.');
-          console.log('[server] Install: pip install matplotlib seaborn numpy');
-        }
-
-        finalResult = text;
-        send('result', text);
-        send('done', JSON.stringify({ ticker, interval, complete: true }));
+        // Send text result
+        sse.send('result', text);
+        sse.send('done', JSON.stringify({ ticker, interval }));
 
         // Save to history
         try {
           const { insertAnalysis } = await import('./history-db.js');
-          insertAnalysis(ticker, interval, finalResult);
-          wsBroadcast(JSON.stringify({ type: 'history_updated' }));
-        } catch { /* history save failed — non-fatal */ }
+          insertAnalysis(ticker, interval, text);
+        } catch { /* non-fatal */ }
 
-        wsBroadcast(JSON.stringify({ type: 'analysis_complete', ticker, interval }));
+        console.log(`[server] SSE analyze complete for ${ticker}`);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        send('error', msg);
+        console.error(`[server] SSE analyze error: ${msg}`);
+        sse.send('error', msg);
       } finally {
-        sseClients.delete(client.id);
-        try { controller.close(); } catch { /* already closed */ }
+        sse.close();
       }
     },
   });
 
   return new Response(stream, {
     headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
       'Connection': 'keep-alive',
       'Access-Control-Allow-Origin': '*',
+      'X-Accel-Buffering': 'no',
     },
   });
 }
 
 async function handleChat(req: Request): Promise<Response> {
   let body: { query?: string; apiKey?: string; provider?: string } = {};
-  try {
-    body = await req.json();
-  } catch {
+  try { body = await req.json(); } catch {
     return jsonResponse({ error: 'Invalid JSON body' }, 400);
   }
 
   const { query, apiKey, provider } = body;
-  if (!query?.trim()) {
-    return jsonResponse({ error: 'Missing query' }, 400);
-  }
+  if (!query?.trim()) return jsonResponse({ error: 'Missing query' }, 400);
+  if (!apiKey?.trim()) return jsonResponse({ error: '请提供你的 API Key（在聊天框下方输入）' }, 400);
 
-  // Require user's own API key — no server default
-  if (!apiKey?.trim()) {
-    return jsonResponse({ error: '请提供你的 API Key（在聊天框下方输入）' }, 400);
-  }
-
-  // Set the user's API key into env for the agent
   const prov = provider || 'deepseek';
   const { Providers } = await import('../model/providers.js');
   const cfg = Providers[prov.toLowerCase()];
-  if (!cfg) {
-    return jsonResponse({ error: `Unknown provider: ${prov}` }, 400);
-  }
+  if (!cfg) return jsonResponse({ error: `Unknown provider: ${prov}` }, 400);
 
   const keyEnv = cfg.apiKeyEnv;
   const prevKey = process.env[keyEnv] || '';
   process.env[keyEnv] = apiKey;
 
+  console.log(`[server] SSE chat starting with ${prov}, query: "${query.slice(0, 60)}..."`);
+
   const stream = new ReadableStream({
     async start(controller) {
-      const client = { id: ++sseId, controller };
-      sseClients.set(client.id, client);
-
-      const send = (event: string, data: string) => {
-        try { controller.enqueue(sseEncode(event, data)); } catch { /* closed */ }
-      };
-
+      const sse = new SSEController(controller);
       try {
         const { Agent } = await import('../agent/agent.js');
-
         const agent = await Agent.create({
           model: `${prov}:${cfg.defaultModel}`,
           memoryEnabled: false,
           usePlanner: false,
         });
 
-        send('status', JSON.stringify({ status: 'thinking' }));
-
         for await (const event of agent.run(query.trim())) {
           if (event.type === 'stream_progress') {
-            const se = event as { type: 'stream_progress'; text?: string; mode: string };
-            if (se.text) {
-              send('token', JSON.stringify({ text: se.text, mode: se.mode }));
-            }
+            const se = event as { text?: string; mode: string };
+            if (se.text) sse.send('token', JSON.stringify({ text: se.text, mode: se.mode }));
           } else if (event.type === 'thinking') {
-            const te = event as { type: 'thinking'; message: string };
-            send('thinking', JSON.stringify({ text: te.message }));
+            sse.send('thinking', JSON.stringify({ text: (event as { message: string }).message }));
           } else if (event.type === 'tool_start') {
-            const te = event as { type: 'tool_start'; tool: string; args: Record<string, unknown> };
-            send('tool_start', JSON.stringify({ tool: te.tool, args: te.args }));
+            const te = event as { tool: string; args: Record<string, unknown> };
+            sse.send('tool_start', JSON.stringify({ tool: te.tool, args: te.args }));
           } else if (event.type === 'tool_end') {
-            const te = event as { type: 'tool_end'; tool: string; result: string };
-            const truncated = te.result.length > 2000 ? te.result.slice(0, 2000) + '…' : te.result;
-            send('tool_end', JSON.stringify({ tool: te.tool, result: truncated }));
+            const te = event as { tool: string; result: string };
+            sse.send('tool_end', JSON.stringify({ tool: te.tool, result: te.result.slice(0, 2000) }));
           } else if (event.type === 'tool_error') {
-            const te = event as { type: 'tool_error'; tool: string; error: string };
-            send('tool_error', JSON.stringify({ tool: te.tool, error: te.error }));
+            const te = event as { tool: string; error: string };
+            sse.send('tool_error', JSON.stringify({ tool: te.tool, error: te.error }));
           } else if (event.type === 'done') {
-            const de = event as { type: 'done'; answer: string; iterations: number; totalTime: number };
-            send('done', JSON.stringify({ answer: de.answer, iterations: de.iterations, totalTime: de.totalTime }));
+            const de = event as { answer: string; iterations: number; totalTime: number };
+            sse.send('done', JSON.stringify({ answer: de.answer, iterations: de.iterations, totalTime: de.totalTime }));
           }
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        send('error', JSON.stringify({ message: msg }));
+        sse.send('error', JSON.stringify({ message: err instanceof Error ? err.message : String(err) }));
       } finally {
-        // Restore API key
         if (keyEnv) process.env[keyEnv] = prevKey;
-        sseClients.delete(client.id);
-        try { controller.close(); } catch { /* already closed */ }
+        sse.close();
       }
     },
   });
 
   return new Response(stream, {
     headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
       'Connection': 'keep-alive',
       'Access-Control-Allow-Origin': '*',
+      'X-Accel-Buffering': 'no',
     },
   });
 }
@@ -238,64 +207,48 @@ async function handleChat(req: Request): Promise<Response> {
 async function handleHistory(req: Request, url: URL): Promise<Response> {
   const { listAnalyses, getAnalysis, deleteAnalysis } = await import('./history-db.js');
 
-  // Match /api/history/:id
   const idMatch = url.pathname.match(/^\/api\/history\/(\d+)$/);
   if (idMatch) {
     const id = parseInt(idMatch[1], 10);
     if (req.method === 'GET') {
       const entry = getAnalysis(id);
-      if (!entry) return jsonResponse({ error: 'Not found' }, 404);
-      return jsonResponse(entry);
+      return entry ? jsonResponse(entry) : jsonResponse({ error: 'Not found' }, 404);
     }
     if (req.method === 'DELETE') {
       deleteAnalysis(id);
-      wsBroadcast(JSON.stringify({ type: 'history_updated' }));
       return jsonResponse({ ok: true });
     }
     return jsonResponse({ error: 'Method not allowed' }, 405);
   }
 
-  // GET /api/history
   if (req.method === 'GET') {
     const search = url.searchParams.get('search') || undefined;
     const sort = (url.searchParams.get('sort') || 'desc') as 'asc' | 'desc';
     const limit = parseInt(url.searchParams.get('limit') || '50', 10);
     const offset = parseInt(url.searchParams.get('offset') || '0', 10);
-    const result = listAnalyses({ search, sort, limit, offset });
-    return jsonResponse(result);
+    return jsonResponse(listAnalyses({ search, sort, limit, offset }));
   }
 
   return jsonResponse({ error: 'Method not allowed' }, 405);
 }
 
 async function handleChartAPI(req: Request): Promise<Response> {
-  if (req.method !== 'POST') {
-    return jsonResponse({ error: 'Use POST with JSON body' }, 405);
-  }
+  if (req.method !== 'POST') return jsonResponse({ error: 'Use POST with JSON body' }, 405);
 
   let body: { chart_type?: string; data?: Record<string, unknown>; title?: string };
-  try {
-    body = await req.json();
-  } catch {
+  try { body = await req.json(); } catch {
     return jsonResponse({ error: 'Invalid JSON body' }, 400);
   }
 
   const { chart_type, data, title } = body;
-  if (!chart_type || !data) {
-    return jsonResponse({ error: 'Missing chart_type or data' }, 400);
-  }
+  if (!chart_type || !data) return jsonResponse({ error: 'Missing chart_type or data' }, 400);
 
   try {
     const { generateChart } = await import('../tools/finance/plot-bridge.js');
-    const result = await generateChart(
-      chart_type as 'equity_curve' | 'indicator_overlay' | 'feature_importance' | 'feature_importance_bar' | 'candlestick' | 'backtest_metrics_table',
-      data,
-      title,
-    );
+    const result = await generateChart(chart_type as any, data as any, title);
     return jsonResponse({ chart_type: result.chart_type, data_url: `data:image/png;base64,${result.base64}` });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return jsonResponse({ error: msg }, 500);
+    return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, 500);
   }
 }
 
@@ -303,25 +256,19 @@ async function handleStrategy(req: Request): Promise<Response> {
   const { loadStrategyConfig, saveStrategyConfig, getStrategyConfigPath } = await import('../tools/finance/strategy-config.js');
 
   if (req.method === 'GET') {
-    const config = loadStrategyConfig();
-    return jsonResponse({ path: getStrategyConfigPath(), config });
+    return jsonResponse({ path: getStrategyConfigPath(), config: loadStrategyConfig() });
   }
-
   if (req.method === 'PUT') {
     try {
       const body = await req.text();
       const parsed = body ? JSON.parse(body) : {};
-      const current = loadStrategyConfig();
-      const merged = { ...current, ...parsed };
+      const merged = { ...loadStrategyConfig(), ...parsed };
       saveStrategyConfig(merged);
-      wsBroadcast(JSON.stringify({ type: 'strategy_updated', config: merged }));
       return jsonResponse({ ok: true, config: merged });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return jsonResponse({ error: msg }, 400);
+      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, 400);
     }
   }
-
   return jsonResponse({ error: 'Method not allowed' }, 405);
 }
 
@@ -337,109 +284,59 @@ function jsonResponse(data: unknown, status = 200): Response {
 }
 
 function serveStatic(filePath: string): Response {
-  if (!existsSync(filePath)) {
-    return new Response('Not Found', { status: 404 });
-  }
+  if (!existsSync(filePath)) return new Response('Not Found', { status: 404 });
   const ext = filePath.slice(filePath.lastIndexOf('.'));
-  const MIME: Record<string, string> = {
-    '.html': 'text/html; charset=utf-8',
-    '.css': 'text/css; charset=utf-8',
-    '.js': 'application/javascript; charset=utf-8',
-    '.json': 'application/json; charset=utf-8',
-  };
-  return new Response(readFileSync(filePath, 'utf-8'), {
-    headers: { 'Content-Type': MIME[ext] || 'application/octet-stream' },
+  const MIME: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8' };
+  return new Response(readFileSync(filePath, 'utf-8'), { headers: { 'Content-Type': MIME[ext] || 'application/octet-stream' } });
+}
+
+function corsRes(): Response {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, PUT, POST, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type',
+    },
   });
 }
 
 // ---------------------------------------------------------------------------
-// CORS
-// ---------------------------------------------------------------------------
-
-function corsHeaders(): Headers {
-  const h = new Headers();
-  h.set('Access-Control-Allow-Origin', '*');
-  h.set('Access-Control-Allow-Methods', 'GET, PUT, POST, DELETE, OPTIONS');
-  h.set('Access-Control-Allow-Headers', 'Content-Type');
-  return h;
-}
-
-// ---------------------------------------------------------------------------
-// Server
+// Server entry
 // ---------------------------------------------------------------------------
 
 const PORT = parseInt(process.env.DEXTER_WEB_PORT || '3100', 10);
 
-const server = Bun.serve({
+Bun.serve({
   port: PORT,
-  fetch(req, server) {
+  fetch(req) {
     const url = new URL(req.url);
 
-    if (req.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: corsHeaders() });
-    }
+    if (req.method === 'OPTIONS') return corsRes();
 
-    // WebSocket upgrade
-    if (url.pathname === '/ws') {
-      const upgraded = server.upgrade(req);
-      if (!upgraded) {
-        return new Response('WebSocket upgrade failed', { status: 400 });
-      }
-      return undefined as unknown as Response;
-    }
+    // SSE endpoints
+    if (url.pathname === '/api/analyze') return handleAnalyzeSSE(url);
+    if (url.pathname === '/api/chat')    return handleChat(req);
 
-    // SSE: stock analysis
-    if (url.pathname === '/api/analyze') {
-      return handleAnalyzeSSE(url);
-    }
-
-    // SSE: agent chat
-    if (url.pathname === '/api/chat') {
-      return handleChat(req);
-    }
-
-    // History API
-    if (url.pathname.startsWith('/api/history')) {
-      return handleHistory(req, url);
-    }
-
-    // Chart generation API
-    if (url.pathname === '/api/chart') {
-      return handleChartAPI(req);
-    }
-
-    // Strategy config
-    if (url.pathname === '/api/strategy') {
-      return handleStrategy(req);
-    }
+    // REST endpoints
+    if (url.pathname.startsWith('/api/history')) return handleHistory(req, url);
+    if (url.pathname === '/api/chart')           return handleChartAPI(req);
+    if (url.pathname === '/api/strategy')         return handleStrategy(req);
 
     // Static
-    if (url.pathname === '/' || url.pathname === '/index.html') {
-      return serveStatic(CLIENT_HTML);
-    }
+    if (url.pathname === '/' || url.pathname === '/index.html') return serveStatic(CLIENT_HTML);
 
     return new Response('Not Found', { status: 404 });
   },
-  websocket: {
-    open(ws) {
-      wsClients.add(ws);
-      ws.send(JSON.stringify({ type: 'connected', clients: wsClients.size }));
-    },
-    close(ws) {
-      wsClients.delete(ws);
-    },
-    message(_ws, _message) {
-      // Client messages handled here if needed
-    },
-  },
 });
 
-  console.log(`\n  QuantAgent Web Server`);
-console.log(`  ─────────────────────`);
-console.log(`  Local:   http://localhost:${PORT}`);
-console.log(`  Analyze: http://localhost:${PORT}/api/analyze?ticker=09868`);
-console.log(`  Chat:    POST http://localhost:${PORT}/api/chat`);
-console.log(`  Chart:   POST http://localhost:${PORT}/api/chart`);
-console.log(`  History: http://localhost:${PORT}/api/history`);
-console.log(`  WS:      ws://localhost:${PORT}/ws`);
-console.log();
+console.log(`\n  ═══════════════════════════`);
+console.log(`   QuantAgent Web Server`);
+console.log(`  ═══════════════════════════`);
+console.log(`   Local:      http://localhost:${PORT}`);
+console.log(`   Analyze SSE: http://localhost:${PORT}/api/analyze?ticker=09868`);
+console.log(`   Chat SSE:   POST http://localhost:${PORT}/api/chat`);
+console.log(`   Chart API:  POST http://localhost:${PORT}/api/chart`);
+console.log(`   History:     http://localhost:${PORT}/api/history`);
+console.log(`   Strategy:    http://localhost:${PORT}/api/strategy`);
+console.log(`  ═══════════════════════════\n`);
