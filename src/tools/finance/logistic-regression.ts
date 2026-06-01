@@ -28,6 +28,7 @@ export const DEFAULT_TRAINING_CONFIG: TrainingConfig = {
 export interface FeatureImportance {
   feature: string;
   coefficient: number;
+  gain?: number;           // XGBoost raw gain (not used for logistic regression)
   absImportance: number;
   importancePct: number;
 }

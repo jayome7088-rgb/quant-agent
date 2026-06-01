@@ -1,14 +1,38 @@
 """
 QuantAgent chart generator — reads JSON from stdin, outputs base64 PNG to stdout.
-Supports: equity_curve, indicator_overlay, feature_importance, candlestick.
+Supports: equity_curve, indicator_overlay, feature_importance, candlestick,
+          feature_importance_bar, backtest_metrics_table.
 """
 import sys, json, base64, io
-import matplotlib
-matplotlib.use('Agg')  # headless — no GUI
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-import numpy as np
 from datetime import datetime
+
+MISSING_DEPS = []
+try:
+    import matplotlib
+    matplotlib.use('Agg')  # headless — no GUI
+    import matplotlib.pyplot as plt
+    import matplotlib.dates as mdates
+except ImportError as e:
+    MISSING_DEPS.append(f"matplotlib: {e}")
+
+try:
+    import numpy as np
+except ImportError as e:
+    MISSING_DEPS.append(f"numpy: {e}")
+
+try:
+    import seaborn as sns
+    sns.set_style("darkgrid")
+    sns.set_palette("muted")
+except ImportError:
+    pass  # optional, fallback to dark_background style
+
+# If core deps are missing, set plt style as fallback
+try:
+    if 'seaborn' not in sys.modules:
+        plt.style.use('dark_background')
+except:
+    pass
 
 # Seaborn style
 try:
@@ -293,6 +317,15 @@ if __name__ == '__main__':
         sys.exit(1)
 
     chart_type = params.get('chart_type', '')
+
+    # Check dependencies before attempting chart generation
+    if MISSING_DEPS:
+        print(json.dumps({
+            'error': f'Missing Python packages: {"; ".join(MISSING_DEPS)}. '
+                     f'Install: pip install matplotlib seaborn numpy'
+        }))
+        sys.exit(1)
+
     handler = CHART_TYPES.get(chart_type)
     if not handler:
         print(json.dumps({'error': f'Unknown chart_type: {chart_type}. Available: {list(CHART_TYPES.keys())}'}))

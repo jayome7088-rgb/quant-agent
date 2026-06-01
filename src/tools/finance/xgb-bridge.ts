@@ -66,9 +66,10 @@ export const DEFAULT_TRAINING_CONFIG: TrainingConfig = {
 
 export interface FeatureImportance {
   feature: string;
-  coefficient: number;
-  absImportance: number;
-  importancePct: number;
+  coefficient: number;   // gain value from XGBoost (tree model, not linear coeff)
+  gain: number;           // raw XGBoost gain (same as coefficient for tree models)
+  absImportance: number;  // importance value after normalization
+  importancePct: number;  // percentage of total gain (sum = 100%)
 }
 
 export interface RollingWindowResult {

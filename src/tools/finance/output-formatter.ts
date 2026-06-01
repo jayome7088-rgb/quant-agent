@@ -192,7 +192,7 @@ function formatTechnicalIndicators(r: StockAnalysisOutput): string {
 function formatFeatureImportance(model: ModelOutput): string {
   const raw = model.featureImportance;
   const lines: string[] = [];
-  lines.push('**3. 特征重要性**');
+  lines.push('**3. 特征重要性 (XGBoost Gain)**');
   lines.push('');
 
   if (raw.length === 0) {
@@ -200,30 +200,22 @@ function formatFeatureImportance(model: ModelOutput): string {
     return lines.join('\n');
   }
 
-  // Sum-normalize: each importance% = abs(coefficient) / sum * 100
-  const absVals = raw.map(f => Math.abs(f.absImportance));
-  const totalAbs = absVals.reduce((s, v) => s + v, 0) || 1;
-  const pcts = absVals.map(v => (v / totalAbs) * 100);
+  // Already sorted by absImportance descending from Python (gain-based)
+  // importancePct is correctly computed: gain / sum(gain) * 100
+  const totalPct = raw.reduce((s, f) => s + f.importancePct, 0);
 
-  // Verify sum ~100% (for debugging)
-  const pctSum = pcts.reduce((s, v) => s + v, 0);
-
-  // Sort by importance descending
-  const indexed = raw.map((f, i) => ({ ...f, normPct: pcts[i] }));
-  indexed.sort((a, b) => b.normPct - a.normPct);
-
-  // Plain text table — no ASCII bars
-  for (let idx = 0; idx < indexed.length && idx < 15; idx++) {
-    const fi = indexed[idx];
-    const sign = fi.coefficient >= 0 ? '+' : '';
+  for (let idx = 0; idx < raw.length && idx < 15; idx++) {
+    const fi = raw[idx];
+    const gainVal = fi.gain ?? fi.coefficient;
+    const gainStr = isFinite(gainVal) ? gainVal.toFixed(6) : '-';
     lines.push(
       `${String(idx + 1).padStart(2)}. ${formatFeatureName(fi.feature).padEnd(16)} ` +
-      `系数: ${sign}${fi.coefficient.toFixed(4)}  重要性: ${fi.normPct.toFixed(1)}%`,
+      `Gain: ${gainStr}  重要性: ${fi.importancePct.toFixed(1)}%`,
     );
   }
 
   lines.push('');
-  lines.push(`(总和: ${pctSum.toFixed(1)}%  |  共 ${raw.length} 个特征)`);
+  lines.push(`(总和: ${totalPct.toFixed(1)}%  |  共 ${raw.length} 个特征  |  基于信息增益 Gain)`);
   lines.push('');
   lines.push('{{PLOT:feature_importance_bar}}');
   return lines.join('\n');

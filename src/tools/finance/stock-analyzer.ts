@@ -225,14 +225,12 @@ export function createStockAnalyzer(): DynamicStructuredTool {
         strategy.backtest,
       );
 
-      // 9. Verify feature importance normalization
-      const rawImp = modelOutput.featureImportance.map(f => f.absImportance);
-      const absImp = rawImp.map(v => Math.abs(v));
-      const impSum = absImp.reduce((s, v) => s + v, 0) || 1;
-      const impPcts = absImp.map(v => (v / impSum) * 100);
-      console.log('[stock_analyzer] Raw coefficients:', modelOutput.featureImportance.map(f => f.coefficient));
-      console.log('[stock_analyzer] Normalized importance (%):', impPcts.map(p => p.toFixed(1)));
-      console.log('[stock_analyzer] Sum of normalized %:', impPcts.reduce((s, v) => s + v, 0).toFixed(2) + '%');
+      // 9. Verify feature importance (gain-based from XGBoost)
+      const gains = modelOutput.featureImportance.map(f => f.gain ?? f.absImportance);
+      const pcts = modelOutput.featureImportance.map(f => f.importancePct);
+      console.log('[stock_analyzer] XGBoost gain values:', gains);
+      console.log('[stock_analyzer] Gain-based importance (%):', pcts.map(p => p.toFixed(1)));
+      console.log('[stock_analyzer] Sum of importance %:', pcts.reduce((s, v) => s + v, 0).toFixed(2) + '%');
       console.log('[stock_analyzer] Equity curve points:', backtestResult.equityCurve.length);
 
       // 11. Format output

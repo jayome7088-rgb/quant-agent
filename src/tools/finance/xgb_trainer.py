@@ -59,22 +59,29 @@ def standardize(X_train, X_test=None):
 
 
 def compute_feature_importance(model, feature_names, X, stds):
-    """Extract feature importance from XGBoost model (gain-based)."""
+    """Extract feature importance from XGBoost model using gain (average information gain per split).
+
+    Gain is the correct metric for tree models — it measures how much each feature
+    contributes to reducing loss across all splits. Unlike linear models, tree models
+    don't have coefficients, so abs(coefficient) normalization is meaningless.
+
+    IMPORTANT: We do NOT multiply by feature stddev. Gain already accounts for feature
+    scale since splits are evaluated on raw feature values. Multiplying by stddev
+    would inflate features with larger numeric ranges and zero out the rest.
+    """
     importance = model.get_booster().get_score(importance_type="gain")
     n = len(feature_names)
     result = []
     for j in range(n):
         gain = importance.get(f"f{j}", 0.0)
-        # Standardized importance = gain * feature_stddev
-        abs_imp = gain * float(stds[j]) if stds[j] > 0 else gain
         result.append({
             "feature": feature_names[j],
-            "coefficient": round(float(gain), 6),
-            "absImportance": round(float(abs_imp), 6),
+            "gain": round(float(gain), 8),
+            "absImportance": round(float(gain), 8),  # raw gain = correct tree importance
         })
-    total = sum(r["absImportance"] for r in result)
+    total_gain = sum(r["absImportance"] for r in result)
     for r in result:
-        r["importancePct"] = round((r["absImportance"] / total * 100) if total > 0 else 0, 2)
+        r["importancePct"] = round((r["absImportance"] / total_gain * 100) if total_gain > 0 else 0, 2)
     result.sort(key=lambda r: r["absImportance"], reverse=True)
     return result
 
