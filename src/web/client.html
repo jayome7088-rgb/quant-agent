@@ -323,11 +323,11 @@ document.getElementById('chatInput').addEventListener('keydown', (e) => { if (e.
 })();
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Stock Analysis (SSE via EventSource)
+// Stock Analysis (SSE via fetch + ReadableStream — same reliable method as chat)
 // ═══════════════════════════════════════════════════════════════════════════
-let currentES = null;
+let currentAnalyzeAbort = null;
 
-function startAnalysis() {
+async function startAnalysis() {
   const ticker = document.getElementById('tickerInput').value.trim();
   if (!ticker) return;
 
@@ -340,61 +340,98 @@ function startAnalysis() {
   result.innerHTML = '<div class="empty-state">分析中…</div>';
   btn.disabled = true;
 
-  if (currentES) { currentES.close(); currentES = null; }
+  // Abort any previous analysis
+  if (currentAnalyzeAbort) { currentAnalyzeAbort.abort(); currentAnalyzeAbort = null; }
 
   addLog(`开始分析 ${ticker} (${interval})...`, 'stage');
 
   const url = `/api/analyze?ticker=${encodeURIComponent(ticker)}&interval=${interval}`;
-  console.log('[client] Creating EventSource:', url);
+  console.log('[client] SSE analyze connecting via fetch:', url);
 
-  const es = new EventSource(url);
-  currentES = es;
   const chartData = {};
+  let resultText = '';
+  const abortController = new AbortController();
+  currentAnalyzeAbort = abortController;
 
-  es.onopen = () => { console.log('[client] EventSource CONNECTED'); };
+  try {
+    console.log('[client] Sending GET request to /api/analyze...');
+    const resp = await fetch(url, { signal: abortController.signal });
 
-  es.addEventListener('progress', (e) => {
-    try { const d = JSON.parse(e.data); console.log('[client] SSE progress:', d.message); addLog(d.message, 'stage'); } catch {}
-  });
-
-  // Named chart events — each chart type gets its own SSE event name
-  const chartTypes = ['equity_curve', 'indicator_overlay', 'feature_importance_bar', 'candlestick', 'backtest_metrics_table'];
-  chartTypes.forEach(ct => {
-    es.addEventListener(ct, (e) => {
-      console.log(`[client] SSE chart event: ${ct}, data length: ${e.data.length}`);
-      chartData[ct] = e.data;
-    });
-  });
-
-  es.addEventListener('result', (e) => {
-    console.log('[client] SSE result received, charts:', Object.keys(chartData).length);
-    renderResultWithCharts(e.data, chartData);
-  });
-
-  es.addEventListener('done', (d) => {
-    try { const dd = JSON.parse(d.data); console.log('[client] SSE done:', dd.ticker); addLog(`分析完成: ${dd.ticker}`, 'result'); } catch {}
-    btn.disabled = false;
-    es.close();
-    currentES = null;
-  });
-
-  es.addEventListener('error', (e) => {
-    const msg = e.data || '未知错误';
-    console.error('[client] SSE error:', msg);
-    addLog(`错误: ${msg}`, 'error');
-    btn.disabled = false;
-    es.close();
-    currentES = null;
-  });
-
-  es.onerror = (e) => {
-    console.error('[client] EventSource onerror — connection failed or closed. readyState:', es.readyState);
-    if (es.readyState === EventSource.CLOSED) {
-      addLog('SSE 连接已关闭', 'error');
-      btn.disabled = false;
-      currentES = null;
+    console.log('[client] SSE response status:', resp.status, 'content-type:', resp.headers.get('content-type'));
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
     }
-  };
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '', currentEvent = '';
+
+    console.log('[client] SSE stream reader started, waiting for chunks...');
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) { console.log('[client] SSE stream ended (done=true)'); break; }
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('event:')) {
+          currentEvent = line.slice(6).trim();
+        } else if (line.startsWith('data:')) {
+          const dataStr = line.slice(5).trim();
+          if (!dataStr) continue;
+
+          console.log(`[client] SSE event: "${currentEvent}", data length: ${dataStr.length}`);
+
+          if (currentEvent === 'progress') {
+            try {
+              const d = JSON.parse(dataStr);
+              console.log('[client]   progress:', d.message);
+              addLog(d.message, 'stage');
+            } catch {}
+          } else if (currentEvent === 'error') {
+            console.error('[client]   error:', dataStr);
+            addLog(`错误: ${dataStr}`, 'error');
+            btn.disabled = false;
+          } else if (currentEvent === 'result') {
+            resultText = dataStr;
+            console.log('[client]   result text received, charts collected:', Object.keys(chartData).length);
+          } else if (currentEvent === 'done') {
+            console.log('[client]   done');
+            addLog(`分析完成: ${ticker}`, 'result');
+            btn.disabled = false;
+          } else {
+            // Named chart events: equity_curve, indicator_overlay, etc.
+            console.log(`[client]   chart event "${currentEvent}" → storing (${dataStr.length} chars)`);
+            chartData[currentEvent] = dataStr;
+
+            // Render this chart immediately into result area
+            renderChartInline(currentEvent, dataStr);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      console.log('[client] SSE aborted by user');
+    } else {
+      console.error('[client] SSE fetch error:', err);
+      addLog(`连接失败: ${err.message}`, 'error');
+      btn.disabled = false;
+    }
+  } finally {
+    currentAnalyzeAbort = null;
+  }
+
+  // Render the text result (charts already rendered inline)
+  if (resultText) {
+    renderTextResult(resultText);
+    console.log('[client] Analysis complete. Charts:', Object.keys(chartData).length, 'Text length:', resultText.length);
+  } else if (Object.keys(chartData).length === 0) {
+    result.innerHTML = '<div class="empty-state">分析失败 — 未收到结果</div>';
+  }
 }
 
 const CHART_LABELS = {
@@ -405,32 +442,50 @@ const CHART_LABELS = {
   backtest_metrics_table: '回测指标',
 };
 
-function renderResultWithCharts(text, chartData) {
+// Render a single chart immediately when received (before text result)
+function renderChartInline(chartType, dataUrl) {
+  if (typeof dataUrl !== 'string' || dataUrl.length < 100) {
+    console.warn('[client] renderChartInline: bad dataUrl for', chartType);
+    return;
+  }
+
   const result = document.getElementById('resultArea');
-  let html = '';
+  // Remove empty-state if present
+  const es = result.querySelector('.empty-state'); if (es) es.remove();
 
-  // Render each chart in its own container
-  for (const [ct, dataUrl] of Object.entries(chartData)) {
-    if (typeof dataUrl === 'string' && dataUrl.length > 100) {
-      const label = CHART_LABELS[ct] || ct;
-      html += `<div class="chart-container" id="chart-${ct}">
-        <div class="chart-label">${label}</div>
-        <img src="${dataUrl}" alt="${label}"
-             onload="console.log('[client] img loaded: ${ct}')"
-             onerror="console.error('[client] img FAILED: ${ct}');this.style.display='none';this.insertAdjacentHTML('afterend','<div style=color:var(--red);padding:20px;border:1px dashed var(--red);border-radius:6px;text-align:center;>图表加载失败: ${label}<br><small>请运行 pip install matplotlib seaborn 并重启</small></div>')">
-      </div>`;
-    }
+  const label = CHART_LABELS[chartType] || chartType;
+  const div = document.createElement('div');
+  div.className = 'chart-container';
+  div.id = 'chart-' + chartType;
+  div.innerHTML = `<div class="chart-label">${label}</div>
+    <img src="${dataUrl}" alt="${label}"
+         onload="console.log('[client] img loaded: ${chartType}')"
+         onerror="console.error('[client] img FAILED: ${chartType}');this.style.display='none';this.insertAdjacentHTML('afterend','<div style=color:var(--red);padding:20px;border:1px dashed var(--red);border-radius:6px;text-align:center;>图表加载失败<br><small>pip install matplotlib seaborn</small></div>')">`;
+  result.appendChild(div);
+  console.log('[client] Chart rendered inline:', chartType);
+}
+
+// Render the text report (charts already added via renderChartInline)
+function renderTextResult(text) {
+  const result = document.getElementById('resultArea');
+  // Remove empty-state if present
+  const es = result.querySelector('.empty-state'); if (es) es.remove();
+
+  // Check if we have any charts
+  const charts = result.querySelectorAll('.chart-container');
+  if (charts.length === 0) {
+    // No charts — show warning
+    const warn = document.createElement('div');
+    warn.style.cssText = 'color:var(--yellow);padding:16px;border:1px dashed var(--yellow);border-radius:6px;margin:12px 0;text-align:center;font-size:13px;';
+    warn.innerHTML = '图表未生成 — 请运行 <code style="background:var(--bg);padding:2px 6px;border-radius:3px;">pip install matplotlib seaborn numpy</code> 并重启服务器';
+    result.appendChild(warn);
   }
 
-  if (Object.keys(chartData).length === 0) {
-    html += `<div style="color:var(--yellow);padding:16px;border:1px dashed var(--yellow);border-radius:6px;margin:12px 0;text-align:center;font-size:13px;">
-      图表未生成 — 请运行 <code style="background:var(--bg);padding:2px 6px;border-radius:3px;">pip install matplotlib seaborn numpy</code> 并重启服务器
-    </div>`;
-  }
-
-  html += `<pre style="margin:0;padding:0;white-space:pre-wrap;font-family:var(--mono);font-size:13px;line-height:1.5;">${escHtml(text)}</pre>`;
-  result.innerHTML = html;
-  console.log('[client] Result rendered, HTML length:', html.length);
+  const pre = document.createElement('pre');
+  pre.style.cssText = 'margin:0;padding:0;white-space:pre-wrap;font-family:var(--mono);font-size:13px;line-height:1.5;';
+  pre.textContent = text;
+  result.appendChild(pre);
+  console.log('[client] Text result rendered, length:', text.length);
 }
 
 function addLog(msg, cls = '') {
