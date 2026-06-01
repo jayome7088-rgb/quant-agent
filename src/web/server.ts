@@ -268,7 +268,7 @@ async function handleChartAPI(req: Request): Promise<Response> {
   try {
     const { generateChart } = await import('../tools/finance/plot-bridge.js');
     const result = await generateChart(
-      chart_type as 'equity_curve' | 'indicator_overlay' | 'feature_importance' | 'candlestick',
+      chart_type as 'equity_curve' | 'indicator_overlay' | 'feature_importance' | 'feature_importance_bar' | 'candlestick' | 'backtest_metrics_table',
       data,
       title,
     );

@@ -37,7 +37,6 @@ export function formatStockAnalysis(result: StockAnalysisOutput): string {
   sections.push(formatTechnicalIndicators(result));
   sections.push('{{PLOT:indicator_overlay}}');
   sections.push(formatFeatureImportance(result.modelOutput));
-  sections.push('{{PLOT:feature_importance}}');
   sections.push(formatRollingBacktest(result.modelOutput));
   sections.push(formatEnhancedBacktest(result.backtestResult));
   sections.push(formatEquityCurve(result.backtestResult));
@@ -79,14 +78,34 @@ export function buildPlotData(result: StockAnalysisOutput): Record<string, { dat
     };
   }
 
-  // Feature importance
+  // Feature importance bar chart
   const topFeatures = result.modelOutput.featureImportance.slice(0, 15);
-  plotData['feature_importance'] = {
+  const rawSum = topFeatures.reduce((s, f) => s + Math.abs(f.absImportance), 0) || 1;
+  plotData['feature_importance_bar'] = {
     data: {
-      features: topFeatures.map(f => f.feature),
-      importance: topFeatures.map(f => f.coefficient),
+      features: topFeatures.map(f => formatFeatureName(f.feature)),
+      importance: topFeatures.map(f => (Math.abs(f.absImportance) / rawSum) * 100),
     },
     title: `${result.ticker} Feature Importance`,
+  };
+
+  // Backtest metrics table chart
+  const m = result.backtestResult.metrics;
+  plotData['backtest_metrics_table'] = {
+    data: {
+      labels: ['总收益率(%)', '年化收益(%)', '夏普比率', '最大回撤(%)', '盈利因子', '胜率(%)', '总交易数', '轻仓/中仓/重仓'],
+      values: [
+        m.totalReturnPct.toFixed(2),
+        m.annualizedReturn.toFixed(2),
+        m.sharpeRatio.toFixed(2),
+        (-m.maxDrawdownPct).toFixed(2),
+        m.profitFactor === Infinity ? '∞' : m.profitFactor.toFixed(2),
+        m.winRate.toFixed(2),
+        String(m.totalTrades),
+        `${m.lightTrades}/${m.mediumTrades}/${m.heavyTrades}`,
+      ],
+    },
+    title: `${result.ticker} Backtest Metrics`,
   };
 
   // Candlestick (recent 60 bars)
@@ -137,7 +156,7 @@ function formatRealTime(r: StockAnalysisOutput): string {
     lines.push('日内最低: 数据暂未获取');
     lines.push('成交量: 数据暂未获取');
   }
-  lines.push('数据源: Yahoo Finance');
+  lines.push('数据源: 东方财富 (East Money)');
 
   return lines.join('\n');
 }
@@ -171,19 +190,29 @@ function formatTechnicalIndicators(r: StockAnalysisOutput): string {
 }
 
 function formatFeatureImportance(model: ModelOutput): string {
+  // Recompute importance percentages with sum normalization
+  // (prevents single-feature 100% bug from raw XGBoost output)
+  const rawSum = model.featureImportance.reduce((s, f) => s + Math.abs(f.absImportance), 0) || 1;
+
   const lines: string[] = [];
   lines.push('**3. 特征重要性**');
   lines.push('');
-  lines.push('| 排名 | 特征 | 系数 | 重要性(%) |');
-  lines.push('|------|------|------|-----------|');
 
-  const top = model.featureImportance.slice(0, 10);
+  const top = model.featureImportance.slice(0, 12);
   for (let idx = 0; idx < top.length; idx++) {
     const fi = top[idx];
+    const normalizedPct = ((Math.abs(fi.absImportance) / rawSum) * 100);
     const sign = fi.coefficient >= 0 ? '+' : '';
-    lines.push(`| ${idx + 1} | ${formatFeatureName(fi.feature)} | ${sign}${fi.coefficient.toFixed(3)} | ${fi.importancePct.toFixed(2)}% |`);
+    const bar = '█'.repeat(Math.round(normalizedPct / 2)); // visual bar, capped
+    lines.push(`${(idx + 1).toString().padStart(2)}. ${formatFeatureName(fi.feature).padEnd(14)} ${sign}${fi.coefficient.toFixed(3)}  ${normalizedPct.toFixed(1)}% ${bar}`);
   }
 
+  if (top.length === 0) {
+    lines.push('(无特征数据)');
+  }
+
+  lines.push('');
+  lines.push('{{PLOT:feature_importance_bar}}');
   return lines.join('\n');
 }
 
@@ -191,20 +220,8 @@ function formatRollingBacktest(model: ModelOutput): string {
   const lines: string[] = [];
   lines.push('**4. 滚动回测结果**');
   lines.push('');
-  lines.push('| 窗口 | 训练期 | 测试期 | 准确率 | 精确率 | 召回率 | F1 |');
-  lines.push('|------|--------|--------|--------|--------|--------|-----|');
-
-  for (const r of model.rollingResults) {
-    lines.push(
-      `| ${r.windowIndex + 1} | ${r.trainStart + 1}-${r.trainEnd} | ${r.testStart + 1}-${r.testEnd} | ${(r.accuracy * 100).toFixed(2)}% | ${(r.precision * 100).toFixed(2)}% | ${(r.recall * 100).toFixed(2)}% | ${r.f1.toFixed(3)} |`,
-    );
-  }
-
-  lines.push('');
-  lines.push('汇总:');
-  lines.push(`- 平均准确率: ${(model.aggregateMetrics.avgAccuracy * 100).toFixed(2)}%`);
-  lines.push(`- 平均F1分数: ${model.aggregateMetrics.avgF1.toFixed(3)}`);
-
+  lines.push(`训练窗口: ${model.rollingResults.length} 轮  |  平均准确率: ${(model.aggregateMetrics.avgAccuracy * 100).toFixed(2)}%  |  平均F1: ${model.aggregateMetrics.avgF1.toFixed(3)}`);
+  lines.push(`平均精确率: ${(model.aggregateMetrics.avgPrecision * 100).toFixed(2)}%  |  平均召回率: ${(model.aggregateMetrics.avgRecall * 100).toFixed(2)}%`);
   return lines.join('\n');
 }
 
@@ -214,17 +231,13 @@ function formatEnhancedBacktest(bt: BacktestResult): string {
   lines.push('**5. 增强回测表现**');
   lines.push('');
 
-  lines.push('| 指标 | 数值 |');
-  lines.push('|------|------|');
-  lines.push(`| 总收益率 | ${signNum(m.totalReturnPct)}% |`);
-  lines.push(`| 年化收益 | ${signNum(m.annualizedReturn)}% |`);
-  lines.push(`| 夏普比率 | ${m.sharpeRatio.toFixed(2)} |`);
-  lines.push(`| 最大回撤 | ${signNum(-m.maxDrawdownPct)}% |`);
-  lines.push(`| 盈利因子 | ${m.profitFactor === Infinity ? '∞' : m.profitFactor.toFixed(2)} |`);
-  lines.push(`| 胜率 | ${m.winRate.toFixed(2)}% |`);
-  lines.push(`| 总交易 | ${m.totalTrades} 笔 (轻仓 ${m.lightTrades} / 中仓 ${m.mediumTrades} / 重仓 ${m.heavyTrades}) |`);
-  lines.push(`| 手续费 | ${fmtPrice(m.totalCommission)} |`);
-  lines.push(`| 滑点成本 | ${fmtPrice(m.totalSlippage)} |`);
+  // Key metrics inline summary
+  lines.push(`总收益率 ${signNum(m.totalReturnPct)}%  |  夏普比率 ${m.sharpeRatio.toFixed(2)}  |  最大回撤 ${signNum(-m.maxDrawdownPct)}%`);
+  lines.push(`胜率 ${m.winRate.toFixed(2)}%  |  盈利因子 ${m.profitFactor === Infinity ? '∞' : m.profitFactor.toFixed(2)}  |  总交易 ${m.totalTrades} 笔`);
+  lines.push('');
+
+  // Full metrics rendered as chart image
+  lines.push('{{PLOT:backtest_metrics_table}}');
 
   return lines.join('\n');
 }
@@ -343,12 +356,6 @@ function fmtVolume(n: number): string {
   if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
   if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
   if (n >= 1e3) return (n / 1e3).toFixed(2) + 'K';
-  return n.toFixed(0);
-}
-
-function fmtCompact(n: number): string {
-  if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(1) + 'M';
-  if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(1) + 'K';
   return n.toFixed(0);
 }
 

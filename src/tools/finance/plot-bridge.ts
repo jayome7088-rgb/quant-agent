@@ -34,7 +34,7 @@ function findPython(): string {
 // Types
 // ---------------------------------------------------------------------------
 
-export type ChartType = 'equity_curve' | 'indicator_overlay' | 'feature_importance' | 'candlestick';
+export type ChartType = 'equity_curve' | 'indicator_overlay' | 'feature_importance' | 'feature_importance_bar' | 'candlestick' | 'backtest_metrics_table';
 
 export interface PlotRequest {
   chart_type: ChartType;

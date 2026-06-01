@@ -232,11 +232,56 @@ def _plot_candlestick_fallback(ohlcv, title):
 # Main
 # ---------------------------------------------------------------------------
 
+def plot_backtest_metrics_table(data, title):
+    """data: { labels: string[], values: string[] } — render as styled matplotlib table"""
+    labels = data.get('labels', [])
+    values = data.get('values', [])
+
+    if not labels or not values:
+        raise ValueError('backtest_metrics_table requires "labels" and "values" arrays')
+
+    n = len(labels)
+    fig, ax = plt.subplots(figsize=(5.5, 0.4 * n + 1.2))
+    ax.axis('off')
+    ax.set_title(title or 'Backtest Metrics', color='#58a6ff', fontsize=12, fontweight='bold',
+                 fontfamily=FONT_FAMILY, pad=12)
+
+    # Build cell text and colors
+    cell_text = [[labels[i], values[i]] for i in range(n)]
+    col_colors = ['#161b22', '#0d1117']
+
+    table = ax.table(
+        cellText=cell_text,
+        colLabels=['指标', '数值'],
+        cellLoc='left',
+        loc='center',
+        cellColours=[[col_colors[j % 2]] * 2 for j in range(n)],
+        colColours=[col_colors[0]] * 2,
+    )
+
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1.0, 1.4)
+
+    # Style header row
+    for key, cell in table.get_celld().items():
+        cell.set_edgecolor('#30363d')
+        cell.set_text_props(color='#c9d1d9', fontfamily=FONT_FAMILY)
+        if key[0] == 0:  # header row
+            cell.set_text_props(color='#58a6ff', fontweight='bold', fontfamily=FONT_FAMILY)
+            cell.set_facecolor('#0d1117')
+
+    fig.tight_layout()
+    return fig_to_b64(fig)
+
+
 CHART_TYPES = {
     'equity_curve': plot_equity_curve,
     'indicator_overlay': plot_indicator_overlay,
     'feature_importance': plot_feature_importance,
+    'feature_importance_bar': plot_feature_importance,
     'candlestick': plot_candlestick,
+    'backtest_metrics_table': plot_backtest_metrics_table,
 }
 
 if __name__ == '__main__':
