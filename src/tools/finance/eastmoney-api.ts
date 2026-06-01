@@ -144,9 +144,11 @@ export async function fetchChart(
   interval: string,
   range: string,
 ): Promise<ChartResult> {
-  const { symbol, secid } = normalizeTicker(ticker);
+  const { symbol, market, secid } = normalizeTicker(ticker);
   const klt = toKlt(interval);
   const lmt = rangeToLimit(range, interval);
+  // K-line prices for A-shares/HK may need divisor (same as quote API)
+  const klineDivisor = market === 'HK' ? 1000 : market === 'SS' || market === 'SZ' ? 100 : 1;
 
   const url = 'http://push2his.eastmoney.com/api/qt/stock/kline/get'
     + `?secid=${secid}`
@@ -175,10 +177,10 @@ export async function fetchChart(
 
     quotes.push({
       timestamp: ts,
-      open: parseFloat(parts[1]),
-      close: parseFloat(parts[2]),
-      high: parseFloat(parts[3]),
-      low: parseFloat(parts[4]),
+      open: parseFloat(parts[1]) / klineDivisor,
+      close: parseFloat(parts[2]) / klineDivisor,
+      high: parseFloat(parts[3]) / klineDivisor,
+      low: parseFloat(parts[4]) / klineDivisor,
       volume: parseInt(parts[5], 10) || 0,
     });
   }
@@ -212,7 +214,9 @@ export async function fetchQuote(ticker: string): Promise<QuoteResult> {
   const price = (d.f43 ?? 0) / divisor;
   const prevClose = price - ((d.f169 ?? 0) / divisor);
   const change = (d.f169 ?? 0) / divisor;
-  const changePct = d.f170 ?? 0;
+  // f170 change percent: HK returns *100 (e.g. 306 = 3.06%)
+  const changePctRaw = d.f170 ?? 0;
+  const changePct = market === 'HK' ? changePctRaw / 100 : changePctRaw;
   const high = (d.f44 ?? 0) / divisor;
   const low = (d.f45 ?? 0) / divisor;
   const volume = d.f47 ?? 0;

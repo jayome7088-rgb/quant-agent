@@ -102,27 +102,40 @@ export function createStockAnalyzer(): DynamicStructuredTool {
 
       let useSynthetic = false;
 
-      // 2. Fetch intraday data
+      // 2. Get current quote FIRST (lightweight) — use its price for synthetic fallback
+      onProgress?.('Fetching quote...');
+      // 2. Get current quote FIRST (lightweight) — use its price for synthetic fallback
+      onProgress?.('Fetching quote...');
+      let quote: { symbol: string; price: number; change: number; changePercent: number; dayHigh: number; dayLow: number; volume: number; marketTime: number } = null!;
+      let quotePrice = 100;
+      try {
+        quote = await fetchQuote(symbol);
+        quotePrice = quote.price;
+      } catch {
+        // quotePrice stays at 100 fallback
+      }
+
+      // 3. Fetch intraday data
       onProgress?.(`Fetching intraday data for ${symbol}...`);
       let intradayBars: OHLCVBar[];
       try {
         const r = await fetchChart(symbol, interval, '5d');
         intradayBars = r.quotes;
-      } catch (err) {
+      } catch (_err) {
         onProgress?.('Intraday fetch failed, using synthetic data...');
-        intradayBars = syntheticBars(78, 185, 1);
+        intradayBars = syntheticBars(78, quotePrice, 1);
         useSynthetic = true;
       }
 
-      // 3. Fetch historical daily data
+      // 4. Fetch historical daily data
       onProgress?.('Fetching historical data...');
       let historicalBars: OHLCVBar[];
       try {
         const r = await fetchChart(symbol, '1d', '2y');
         historicalBars = r.quotes;
-      } catch (err) {
+      } catch (_err) {
         onProgress?.('Historical fetch failed, using synthetic data...');
-        historicalBars = syntheticBars(504, 150, 42);
+        historicalBars = syntheticBars(504, quotePrice, 42);
         useSynthetic = true;
       }
 
@@ -132,12 +145,8 @@ export function createStockAnalyzer(): DynamicStructuredTool {
         }, []);
       }
 
-      // 4. Get current quote
-      onProgress?.('Fetching quote...');
-      let quote: { symbol: string; price: number; change: number; changePercent: number; dayHigh: number; dayLow: number; volume: number; marketTime: number };
-      try {
-        quote = await fetchQuote(symbol);
-      } catch {
+      // Build quote from intraday bars if fetch failed
+      if (!quote) {
         const b = intradayBars[intradayBars.length - 1];
         quote = {
           symbol, price: b.close, change: b.close - intradayBars[0].open,

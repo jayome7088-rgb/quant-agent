@@ -46,18 +46,20 @@ export interface TrainingConfig {
 
 export const DEFAULT_TRAINING_CONFIG: TrainingConfig = {
   windowSize: 250,
-  testSize: 30,
+  testSize: 60,        // longer test period → better generalization estimate
   stepSize: 25,
   xgbParams: {
     objective: 'binary:logistic',
     eval_metric: 'logloss',
-    max_depth: 4,
-    learning_rate: 0.03,
-    n_estimators: 150,
-    subsample: 0.8,
-    colsample_bytree: 0.8,
-    reg_lambda: 1.0,
-    reg_alpha: 0.1,
+    max_depth: 3,        // reduced from 4 → less overfitting
+    learning_rate: 0.02, // reduced from 0.03 → smoother convergence
+    n_estimators: 120,   // reduced from 150
+    subsample: 0.7,      // reduced from 0.8 → more randomness
+    colsample_bytree: 0.7,
+    min_child_weight: 5, // prevent overly specific leaf splits
+    reg_lambda: 3.0,     // L2 regularization ↑ (was 1.0)
+    reg_alpha: 0.5,      // L1 regularization ↑ (was 0.1)
+    gamma: 0.1,          // minimum loss reduction for split
     random_state: 42,
   },
 };

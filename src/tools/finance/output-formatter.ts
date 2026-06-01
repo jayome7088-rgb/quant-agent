@@ -365,7 +365,8 @@ function formatSummary(r: StockAnalysisOutput): string {
 function formatPrediction(r: StockAnalysisOutput): string {
   const prob = r.modelOutput.nextDayProbability;
   const direction = prob >= 0.5 ? '上涨' : '下跌';
-  const probDisplay = prob >= 0.5 ? prob : 1 - prob;
+  // Show probability OF the predicted direction (not always "上涨概率")
+  const directionPct = (prob >= 0.5 ? prob : 1 - prob) * 100;
   const signalStrength = prob >= 0.80 ? '强烈偏多' : prob >= 0.65 ? '中等偏多' : prob >= 0.55 ? '轻微偏多' : prob >= 0.45 ? '中性' : prob >= 0.35 ? '轻微偏空' : prob >= 0.20 ? '中等偏空' : '强烈偏空';
   const suggestion = prob >= 0.65 ? `中等仓位 (${((prob >= 0.80 ? 0.50 : 0.25) * 100).toFixed(0)}%)` : prob >= 0.55 ? '轻仓 (10%)' : '不建议做多';
 
@@ -373,7 +374,7 @@ function formatPrediction(r: StockAnalysisOutput): string {
   lines.push('**8. 下一日预测**');
   lines.push('');
   lines.push(`预测方向: ${direction}`);
-  lines.push(`上涨概率: ${(probDisplay * 100).toFixed(2)}%`);
+  lines.push(`${direction}概率: ${directionPct.toFixed(2)}%`);
   lines.push(`信号强度: ${signalStrength}`);
   lines.push(`仓位建议: ${suggestion}`);
   lines.push('风险提示: 模型基于历史数据训练，不保证未来表现。仅供参考，不构成投资建议。');
