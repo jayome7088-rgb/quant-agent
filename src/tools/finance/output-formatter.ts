@@ -41,7 +41,6 @@ export function formatStockAnalysis(result: StockAnalysisOutput): string {
   sections.push(formatRollingBacktest(result.modelOutput));
   sections.push(formatEnhancedBacktest(result.backtestResult));
   sections.push(formatEquityCurve(result.backtestResult));
-  sections.push('{{PLOT:equity_curve}}');
   sections.push(formatSummary(result));
   sections.push(formatPrediction(result));
   sections.push(formatDisclaimer());
@@ -238,68 +237,12 @@ function formatEquityCurve(bt: BacktestResult): string {
 
   if (equityCurve.length < 2) {
     lines.push('(数据不足，无法绘制权益曲线)');
-    return lines.join('\n');
+  } else {
+    // Chart rendered via seaborn/matplotlib — see plot placeholder below
+    lines.push('{{PLOT:equity_curve}}');
   }
 
-  // ASCII chart: normalize to 12 lines height, 60 columns wide
-  const height = 12;
-  const width = Math.min(60, equityCurve.length);
-  const step = Math.max(1, Math.floor(equityCurve.length / width));
-  const sampled: number[] = [];
-  for (let i = 0; i < equityCurve.length; i += step) {
-    sampled.push(equityCurve[i]);
-  }
-
-  const minVal = Math.min(...sampled);
-  const maxVal = Math.max(...sampled);
-  const range = maxVal - minVal || 1;
-
-  // Build the chart line by line
-  const rows: string[][] = [];
-  for (let row = 0; row < height; row++) {
-    rows.push(new Array(sampled.length).fill(' '));
-  }
-
-  // Plot the line
-  for (let col = 0; col < sampled.length; col++) {
-    const norm = (sampled[col] - minVal) / range;
-    const row = Math.round((1 - norm) * (height - 1));
-    rows[row][col] = col > 0 && row < height - 1 ? '╭' : '─';
-  }
-
-  // Connect adjacent points with vertical lines
-  for (let col = 1; col < sampled.length; col++) {
-    const prevNorm = (sampled[col - 1] - minVal) / range;
-    const currNorm = (sampled[col] - minVal) / range;
-    const prevRow = Math.round((1 - prevNorm) * (height - 1));
-    const currRow = Math.round((1 - currNorm) * (height - 1));
-
-    if (Math.abs(currRow - prevRow) > 1) {
-      const startRow = Math.min(prevRow, currRow);
-      const endRow = Math.max(prevRow, currRow);
-      for (let r = startRow + 1; r < endRow; r++) {
-        rows[r][col - 1] = '│';
-      }
-    }
-  }
-
-  // Y-axis labels
-  const yLabelWidth = 8;
-  const yLabels: string[] = [];
-  for (let row = 0; row < height; row++) {
-    const val = maxVal - (row / (height - 1)) * range;
-    const label = fmtCompact(val).padStart(yLabelWidth);
-    yLabels.push(label);
-  }
-
-  const chartLines: string[] = [];
-  for (let row = 0; row < height; row++) {
-    chartLines.push(`${yLabels[row]} ┤${rows[row].join('')}`);
-  }
-  // X-axis
-  chartLines.push(`${' '.repeat(yLabelWidth)} └${'─'.repeat(sampled.length)}`);
-
-  return lines.concat(chartLines).join('\n');
+  return lines.join('\n');
 }
 
 function formatSummary(r: StockAnalysisOutput): string {
@@ -415,6 +358,7 @@ function signNum(n: number): string {
 
 function formatFeatureName(name: string): string {
   const map: Record<string, string> = {
+    // Technical
     limitUpDown: '涨跌停信号',
     bigBullishCandle: '大阳线',
     bigBearishCandle: '大阴线',
@@ -432,6 +376,17 @@ function formatFeatureName(name: string): string {
     macdHistogram: 'MACD柱',
     bollingerPosition: '布林带位置',
     atrNormalized: 'ATR归一化',
+    // Position
+    pricePosition: '价格分位(60日)',
+    volumeConcentration: '筹码集中度(量)',
+    // Fundamental
+    peRatio: '市盈率(PE)',
+    pbRatio: '市净率(PB)',
+    revenueGrowth: '营收增长率',
+    earningsGrowth: '盈利增长率',
+    grossMargin: '毛利率',
+    netMargin: '净利率',
+    roe: 'ROE',
   };
   return map[name] ?? name;
 }

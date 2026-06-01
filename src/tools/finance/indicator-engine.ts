@@ -6,6 +6,10 @@ import type { OHLCVBar } from './yahoo-api.js';
 // Helper functions
 // ---------------------------------------------------------------------------
 
+function isFiniteNum(v: unknown): v is number {
+  return typeof v === 'number' && isFinite(v);
+}
+
 function sum(arr: number[]): number {
   return arr.reduce((a, b) => a + b, 0);
 }
@@ -106,6 +110,17 @@ export interface IndicatorFeatures {
   bollingerLower: number[];
   bollingerPosition: number[];
   atrNormalized: number[];
+  // Fundamental features (constant per stock, repeated across all bars)
+  peRatio: number[];
+  pbRatio: number[];
+  revenueGrowth: number[];
+  earningsGrowth: number[];
+  grossMargin: number[];
+  netMargin: number[];
+  roe: number[];
+  // Position / volume-based features
+  pricePosition: number[];
+  volumeConcentration: number[];
   // Target
   nextDayDirection: number[];
 }
@@ -124,6 +139,7 @@ export interface IndicatorMatrix {
 
 /** Ordered list of feature names used for model training (matches column order in the matrix). */
 export const MODEL_FEATURE_NAMES = [
+  // Technical
   'limitUpDown',
   'bigBullishCandle',
   'bigBearishCandle',
@@ -141,13 +157,34 @@ export const MODEL_FEATURE_NAMES = [
   'macdHistogram',
   'bollingerPosition',
   'atrNormalized',
+  // Position
+  'pricePosition',
+  'volumeConcentration',
+  // Fundamental
+  'peRatio',
+  'pbRatio',
+  'revenueGrowth',
+  'earningsGrowth',
+  'grossMargin',
+  'netMargin',
+  'roe',
 ];
 
 // ---------------------------------------------------------------------------
 // Main computation
 // ---------------------------------------------------------------------------
 
-export function computeIndicators(bars: OHLCVBar[], market = 'US'): IndicatorMatrix {
+export interface FundamentalSnapshot {
+  peRatio?: number;
+  pbRatio?: number;
+  revenueGrowth?: number;
+  earningsGrowth?: number;
+  grossMargin?: number;
+  netMargin?: number;
+  roe?: number;
+}
+
+export function computeIndicators(bars: OHLCVBar[], market = 'US', fundamentals?: FundamentalSnapshot): IndicatorMatrix {
   const n = bars.length;
   const closes = bars.map((b) => b.close);
   const volumes = bars.map((b) => b.volume);
@@ -229,6 +266,17 @@ export function computeIndicators(bars: OHLCVBar[], market = 'US'): IndicatorMat
     bollingerLower: bbLower,
     bollingerPosition: new Array(n).fill(NaN),
     atrNormalized: new Array(n).fill(NaN),
+    // Fundamental (constant across bars, filled after loop)
+    peRatio: new Array(n).fill(NaN),
+    pbRatio: new Array(n).fill(NaN),
+    revenueGrowth: new Array(n).fill(NaN),
+    earningsGrowth: new Array(n).fill(NaN),
+    grossMargin: new Array(n).fill(NaN),
+    netMargin: new Array(n).fill(NaN),
+    roe: new Array(n).fill(NaN),
+    // Position
+    pricePosition: new Array(n).fill(NaN),
+    volumeConcentration: new Array(n).fill(NaN),
     nextDayDirection: new Array(n).fill(NaN),
   };
 
@@ -290,6 +338,44 @@ export function computeIndicators(bars: OHLCVBar[], market = 'US'): IndicatorMat
     // Next-day direction (target)
     if (i < n - 1) {
       f.nextDayDirection[i] = closes[i + 1] > c ? 1 : 0;
+    }
+
+    // Price position: where current price sits in 60-day range (proxy 获利比例)
+    if (i >= 60) {
+      const max60 = Math.max(...highs.slice(i - 59, i + 1));
+      const min60 = Math.min(...lows.slice(i - 59, i + 1));
+      if (max60 > min60) {
+        f.pricePosition[i] = (c - min60) / (max60 - min60);
+      }
+    }
+
+    // Volume concentration: recent 5-day avg vol / 60-day avg vol (proxy 筹码集中度)
+    if (i >= 60 && volSma20[i] > 0) {
+      const recentVol = volumes.slice(i - 4, i + 1).reduce((a, b) => a + b, 0) / 5;
+      const longVol = volumes.slice(i - 59, i + 1).reduce((a, b) => a + b, 0) / 60;
+      if (longVol > 0) {
+        f.volumeConcentration[i] = recentVol / longVol;
+      }
+    }
+  }
+
+  // Fill fundamental features (constant across all bars)
+  if (fundamentals) {
+    const pe = fundamentals.peRatio && fundamentals.peRatio > 0 ? fundamentals.peRatio : NaN;
+    const pb = fundamentals.pbRatio && fundamentals.pbRatio > 0 ? fundamentals.pbRatio : NaN;
+    const rg = isFiniteNum(fundamentals.revenueGrowth) ? fundamentals.revenueGrowth! : NaN;
+    const eg = isFiniteNum(fundamentals.earningsGrowth) ? fundamentals.earningsGrowth! : NaN;
+    const gm = isFiniteNum(fundamentals.grossMargin) ? fundamentals.grossMargin! : NaN;
+    const nm = isFiniteNum(fundamentals.netMargin) ? fundamentals.netMargin! : NaN;
+    const re = isFiniteNum(fundamentals.roe) ? fundamentals.roe! : NaN;
+    for (let i = 0; i < n; i++) {
+      f.peRatio[i] = pe;
+      f.pbRatio[i] = pb;
+      f.revenueGrowth[i] = rg;
+      f.earningsGrowth[i] = eg;
+      f.grossMargin[i] = gm;
+      f.netMargin[i] = nm;
+      f.roe[i] = re;
     }
   }
 

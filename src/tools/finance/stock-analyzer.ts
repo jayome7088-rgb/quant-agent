@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { formatToolResult } from '../types.js';
 import { normalizeTicker, fetchChart, fetchQuote, OHLCVBar } from './eastmoney-api.js';
 import { computeIndicators, extractTrainingMatrix, MODEL_FEATURE_NAMES } from './indicator-engine.js';
+import type { FundamentalSnapshot } from './indicator-engine.js';
 import { trainXGBoost } from './xgb-bridge.js';
 import { runBacktest } from './backtest-engine.js';
 import { formatStockAnalysis, buildPlotData } from './output-formatter.js';
@@ -43,6 +44,15 @@ const StockAnalyzerInputSchema = z.object({
   ticker: z.string().describe("The stock ticker symbol. Supports US stocks (AAPL), HK stocks (09868, 0700), and China A-shares (600000, 000001)."),
   interval: z.enum(['1m', '5m', '15m', '30m', '1h']).default('5m').describe("Intraday interval for real-time data. Default 5m."),
 });
+
+/** Pick the first defined numeric value from an object using candidate keys. */
+function pickNum(obj: Record<string, unknown>, ...keys: string[]): number | undefined {
+  for (const k of keys) {
+    const v = obj[k];
+    if (typeof v === 'number' && isFinite(v)) return v;
+  }
+  return undefined;
+}
 
 // ---------------------------------------------------------------------------
 // Synthetic data fallback
@@ -158,9 +168,33 @@ export function createStockAnalyzer(): DynamicStructuredTool {
         };
       }
 
-      // 5. Compute technical indicators
+      // 5. Fetch fundamental data (key ratios)
+      onProgress?.('Fetching fundamental data...');
+      let fundamentals: FundamentalSnapshot = {};
+      try {
+        const apiModule = await import('./api.js');
+        const { data } = await apiModule.api.get('/financial-metrics/snapshot/', { ticker: symbol }, { cacheable: true, ttlMs: 3600000 });
+        const snap = (data as Record<string, unknown>).snapshot || data;
+        const s = snap as Record<string, unknown>;
+        // Map API fields to our fundamental snapshot, cap extreme values
+        const cap = (v: number | undefined, min: number, max: number) =>
+          v !== undefined ? Math.max(min, Math.min(max, v)) : undefined;
+        fundamentals = {
+          peRatio: cap(pickNum(s, 'price_to_earnings_ratio', 'pe_ratio', 'pe'), -500, 500),
+          pbRatio: cap(pickNum(s, 'price_to_book_ratio', 'pb_ratio', 'pb'), -50, 100),
+          revenueGrowth: cap(pickNum(s, 'revenue_growth', 'revenue_growth_yoy'), -1, 5),
+          earningsGrowth: cap(pickNum(s, 'earnings_growth_yoy', 'net_income_growth', 'earnings_growth'), -1, 5),
+          grossMargin: cap(pickNum(s, 'gross_margin'), -0.5, 1.5),
+          netMargin: cap(pickNum(s, 'net_margin', 'profit_margin'), -1, 1),
+          roe: cap(pickNum(s, 'return_on_equity', 'roe'), -2, 3),
+        };
+      } catch {
+        // Fundamentals unavailable — continue without them
+      }
+
+      // 6. Compute technical indicators
       onProgress?.('Computing technical indicators...');
-      const indicators = computeIndicators(historicalBars, market);
+      const indicators = computeIndicators(historicalBars, market, fundamentals);
 
       // 6. Load strategy config
       const strategy = loadStrategyConfig();
