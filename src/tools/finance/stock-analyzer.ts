@@ -225,7 +225,17 @@ export function createStockAnalyzer(): DynamicStructuredTool {
         strategy.backtest,
       );
 
-      // 9. Format output
+      // 9. Verify feature importance normalization
+      const rawImp = modelOutput.featureImportance.map(f => f.absImportance);
+      const absImp = rawImp.map(v => Math.abs(v));
+      const impSum = absImp.reduce((s, v) => s + v, 0) || 1;
+      const impPcts = absImp.map(v => (v / impSum) * 100);
+      console.log('[stock_analyzer] Raw coefficients:', modelOutput.featureImportance.map(f => f.coefficient));
+      console.log('[stock_analyzer] Normalized importance (%):', impPcts.map(p => p.toFixed(1)));
+      console.log('[stock_analyzer] Sum of normalized %:', impPcts.reduce((s, v) => s + v, 0).toFixed(2) + '%');
+      console.log('[stock_analyzer] Equity curve points:', backtestResult.equityCurve.length);
+
+      // 11. Format output
       onProgress?.('Formatting analysis report...');
       const dataTime = useSynthetic
         ? new Date().toISOString()
@@ -249,7 +259,7 @@ export function createStockAnalyzer(): DynamicStructuredTool {
 
       let formatted = formatStockAnalysis(analysisOutput);
 
-      // 10. Generate charts
+      // 12. Generate charts
       let plotDataUrls: Record<string, string> = {};
       try {
         onProgress?.('Generating charts...');

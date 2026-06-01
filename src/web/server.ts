@@ -84,7 +84,11 @@ async function handleAnalyzeSSE(url: URL): Promise<Response> {
 
         // Emit plot events for each chart
         for (const [chartType, dataUrl] of Object.entries(plots)) {
+          console.log(`[server] Sending plot event: ${chartType}, data length: ${dataUrl.length}`);
           send('plot', JSON.stringify({ chart_type: chartType, data_url: dataUrl }));
+        }
+        if (Object.keys(plots).length === 0) {
+          console.log('[server] No plots generated (Python/matplotlib may be unavailable)');
         }
 
         finalResult = text;

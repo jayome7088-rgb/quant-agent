@@ -190,27 +190,40 @@ function formatTechnicalIndicators(r: StockAnalysisOutput): string {
 }
 
 function formatFeatureImportance(model: ModelOutput): string {
-  // Recompute importance percentages with sum normalization
-  // (prevents single-feature 100% bug from raw XGBoost output)
-  const rawSum = model.featureImportance.reduce((s, f) => s + Math.abs(f.absImportance), 0) || 1;
-
+  const raw = model.featureImportance;
   const lines: string[] = [];
   lines.push('**3. 特征重要性**');
   lines.push('');
 
-  const top = model.featureImportance.slice(0, 12);
-  for (let idx = 0; idx < top.length; idx++) {
-    const fi = top[idx];
-    const normalizedPct = ((Math.abs(fi.absImportance) / rawSum) * 100);
-    const sign = fi.coefficient >= 0 ? '+' : '';
-    const bar = '█'.repeat(Math.round(normalizedPct / 2)); // visual bar, capped
-    lines.push(`${(idx + 1).toString().padStart(2)}. ${formatFeatureName(fi.feature).padEnd(14)} ${sign}${fi.coefficient.toFixed(3)}  ${normalizedPct.toFixed(1)}% ${bar}`);
-  }
-
-  if (top.length === 0) {
+  if (raw.length === 0) {
     lines.push('(无特征数据)');
+    return lines.join('\n');
   }
 
+  // Sum-normalize: each importance% = abs(coefficient) / sum * 100
+  const absVals = raw.map(f => Math.abs(f.absImportance));
+  const totalAbs = absVals.reduce((s, v) => s + v, 0) || 1;
+  const pcts = absVals.map(v => (v / totalAbs) * 100);
+
+  // Verify sum ~100% (for debugging)
+  const pctSum = pcts.reduce((s, v) => s + v, 0);
+
+  // Sort by importance descending
+  const indexed = raw.map((f, i) => ({ ...f, normPct: pcts[i] }));
+  indexed.sort((a, b) => b.normPct - a.normPct);
+
+  // Plain text table — no ASCII bars
+  for (let idx = 0; idx < indexed.length && idx < 15; idx++) {
+    const fi = indexed[idx];
+    const sign = fi.coefficient >= 0 ? '+' : '';
+    lines.push(
+      `${String(idx + 1).padStart(2)}. ${formatFeatureName(fi.feature).padEnd(16)} ` +
+      `系数: ${sign}${fi.coefficient.toFixed(4)}  重要性: ${fi.normPct.toFixed(1)}%`,
+    );
+  }
+
+  lines.push('');
+  lines.push(`(总和: ${pctSum.toFixed(1)}%  |  共 ${raw.length} 个特征)`);
   lines.push('');
   lines.push('{{PLOT:feature_importance_bar}}');
   return lines.join('\n');

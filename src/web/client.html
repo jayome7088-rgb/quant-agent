@@ -784,15 +784,24 @@ function startAnalysis() {
   currentSSE.addEventListener('plot', (e) => {
     try {
       const d = JSON.parse(e.data);
+      console.log('[client] Received plot event:', d.chart_type, 'data length:', d.data_url?.length || 0);
       plotImages[d.chart_type] = d.data_url;
-    } catch {}
+    } catch (err) {
+      console.error('[client] Failed to parse plot event:', err);
+    }
   });
 
   currentSSE.addEventListener('result', (e) => {
+    console.log('[client] Result received, plots:', Object.keys(plotImages).length);
     // Build HTML: plots as images + text result
     let html = '';
     for (const [chartType, dataUrl] of Object.entries(plotImages)) {
-      html += `<div style="margin:12px 0;"><img src="${dataUrl}" alt="${chartType}" style="max-width:100%;border:1px solid var(--border);border-radius:4px;"></div>`;
+      html += `<div style="margin:16px 0;text-align:center;">
+        <img src="${dataUrl}" alt="${chartType}"
+             style="max-width:100%;min-width:600px;border:1px solid var(--border);border-radius:4px;"
+             onerror="this.parentElement.innerHTML='<div style=color:var(--red)>[图表加载失败: ${chartType}]</div>'">
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;">${chartType}</div>
+      </div>`;
     }
     html += `<pre style="margin:0;white-space:pre-wrap;font-family:var(--mono);font-size:13px;line-height:1.5;">${escHtml(e.data)}</pre>`;
     result.innerHTML = html;
