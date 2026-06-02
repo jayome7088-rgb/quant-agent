@@ -190,6 +190,9 @@ export async function fetchChart(
   const last = quotes[quotes.length - 1];
   const prevClose = quotes.length > 1 ? quotes[quotes.length - 2].close : last.open;
 
+  // Diagnostic
+  console.log(`[eastmoney] kline — secid=${secid} name=${rawName} bars=${quotes.length} first=(${quotes[0]?.timestamp},${quotes[0]?.close}) last=(${last.timestamp},${last.close})`);
+
   return {
     meta: {
       symbol: rawName,
@@ -208,10 +211,13 @@ export async function fetchQuote(ticker: string): Promise<QuoteResult> {
 
   const url = 'http://push2.eastmoney.com/api/qt/stock/get'
     + `?secid=${secid}`
-    + '&fields=f43,f44,f45,f46,f47,f48,f50,f57,f58,f60,f169,f170';
+    + '&fields=f43,f44,f45,f46,f47,f48,f50,f57,f58,f60,f86,f169,f170';
 
   const data = await fetchJson(url, `quote ${ticker}`);
   const d = data.data ?? {};
+
+  // Diagnostic: log raw API values to verify East Money returns correct stock
+  console.log(`[eastmoney] quote raw — secid=${secid} market=${market} name=${d.f58} f43=${d.f43} f44=${d.f44} f45=${d.f45} f169=${d.f169} f170=${d.f170} f86=${d.f86}`);
 
   const price = (d.f43 ?? 0) / divisor;
   const prevClose = price - ((d.f169 ?? 0) / divisor);
@@ -223,6 +229,12 @@ export async function fetchQuote(ticker: string): Promise<QuoteResult> {
   const low = (d.f45 ?? 0) / divisor;
   const volume = d.f47 ?? 0;
 
+  // f86 is the quote timestamp (Unix seconds or milliseconds)
+  const rawTs = d.f86 ?? 0;
+  const marketTime = rawTs > 1e12 ? Math.floor(rawTs / 1000) : rawTs > 0 ? rawTs : Math.floor(Date.now() / 1000);
+
+  console.log(`[eastmoney] quote computed — name=${d.f58} price=${price.toFixed(2)} change=${change.toFixed(2)} ${changePct.toFixed(2)}% hi=${high.toFixed(2)} lo=${low.toFixed(2)} vol=${volume}`);
+
   return {
     symbol: d.f58 ?? symbol,
     price: Math.round(price * 100) / 100,
@@ -231,6 +243,6 @@ export async function fetchQuote(ticker: string): Promise<QuoteResult> {
     dayHigh: Math.round(high * 100) / 100,
     dayLow: Math.round(low * 100) / 100,
     volume,
-    marketTime: Math.floor(Date.now() / 1000),
+    marketTime,
   };
 }
