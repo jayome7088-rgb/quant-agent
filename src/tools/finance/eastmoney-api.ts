@@ -165,13 +165,23 @@ export async function fetchChart(
   // Do NOT apply a divisor here — it would shrink A-shares by 100x and
   // HK stocks by 1000x, making prices near-zero and triggering synthetic fallback.
 
-  const url = 'http://push2his.eastmoney.com/api/qt/stock/kline/get'
-    + `?secid=${secid}`
-    + '&fields1=f1,f2,f3,f4,f5,f6'
-    + '&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61'
-    + `&klt=${klt}&fqt=1&lmt=${lmt}`;
-
-  const data = await fetchJson(url, `chart ${ticker} (${interval}, ${range})`);
+  const secids = altSecids(secid, market);
+  let data: any = null;
+  let lastErr = '';
+  for (const sid of secids) {
+    const url = 'http://push2his.eastmoney.com/api/qt/stock/kline/get'
+      + `?secid=${sid}`
+      + '&fields1=f1,f2,f3,f4,f5,f6'
+      + '&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61'
+      + `&klt=${klt}&fqt=1&lmt=${lmt}`;
+    try {
+      data = await fetchJson(url, `chart ${ticker} (${interval}, ${range}) via ${sid}`);
+      break;
+    } catch (e) {
+      lastErr = e instanceof Error ? e.message : String(e);
+    }
+  }
+  if (!data) throw new Error(lastErr);
 
   const rawName: string = data.data.name ?? symbol;
   const klines: string[] = data.data.klines ?? [];
@@ -218,15 +228,40 @@ export async function fetchChart(
   };
 }
 
+/** Generate alternative secids to try for HK stocks (with/without leading zero). */
+function altSecids(primary: string, market: string): string[] {
+  if (market !== 'HK') return [primary];
+  // e.g. 116.09626 → also try 116.9626
+  const parts = primary.split('.');
+  if (parts.length === 2 && parts[1].startsWith('0')) {
+    const stripped = parts[1].replace(/^0+/, '') || '0';
+    return [primary, `${parts[0]}.${stripped}`];
+  }
+  return [primary];
+}
+
 export async function fetchQuote(ticker: string): Promise<QuoteResult> {
   const { symbol, market, secid } = normalizeTicker(ticker);
   const divisor = market === 'HK' ? 1000 : 100;
 
-  const url = 'http://push2.eastmoney.com/api/qt/stock/get'
-    + `?secid=${secid}`
-    + '&fields=f43,f44,f45,f46,f47,f48,f50,f57,f58,f60,f86,f169,f170';
-
-  const data = await fetchJson(url, `quote ${ticker}`);
+  const secids = altSecids(secid, market);
+  let data: any = null;
+  let lastErr = '';
+  for (const sid of secids) {
+    const url = 'http://push2.eastmoney.com/api/qt/stock/get'
+      + `?secid=${sid}`
+      + '&fields=f43,f44,f45,f46,f47,f48,f50,f57,f58,f60,f86,f169,f170';
+    try {
+      data = await fetchJson(url, `quote ${ticker} (${sid})`);
+      break;
+    } catch (e) {
+      lastErr = e instanceof Error ? e.message : String(e);
+      if (sid !== secids[secids.length - 1]) {
+        console.warn(`[eastmoney] quote secid ${sid} failed, trying ${secids[secids.length - 1]}...`);
+      }
+    }
+  }
+  if (!data) throw new Error(lastErr);
   const d = data.data ?? {};
 
   // Diagnostic: log raw API values to verify East Money returns correct stock
