@@ -83,44 +83,77 @@ export function normalizeTicker(raw: string): { symbol: string; market: string; 
 // HTTP helpers
 // ---------------------------------------------------------------------------
 
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 async function fetchJson(url: string, label: string, retries = 2): Promise<any> {
+  // Try Bun fetch first, fallback to curl on repeated socket failures
+  let socketFails = 0;
   let lastErr = '';
+
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (attempt > 0) {
-      // Rate-limit backoff: 500ms, 1000ms
       await new Promise(r => setTimeout(r, attempt * 500));
     }
-    let text = '';
+
+    // After 2 socket failures, switch to curl
+    if (socketFails >= 2) {
+      console.warn(`[eastmoney] ${label}: switching to curl after ${socketFails} fetch failures`);
+      try {
+        const text = await curlFetch(url);
+        const data = JSON.parse(text);
+        if (data.rc === 0 && data.data !== null) return data;
+        lastErr = `curl: API rc=${data.rc}`;
+      } catch (e: any) {
+        lastErr = `curl: ${e.message}`;
+      }
+      continue;
+    }
+
     try {
       const resp = await fetch(url, {
-        headers: { 'User-Agent': UA, 'Referer': 'https://quote.eastmoney.com/' },
+        headers: {
+          'User-Agent': UA,
+          'Referer': 'https://quote.eastmoney.com/',
+          'Accept': '*/*',
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+          'Cache-Control': 'no-cache',
+        },
         signal: AbortSignal.timeout(15_000),
       });
-      text = await resp.text();
+      const text = await resp.text();
+
+      const data = JSON.parse(text);
+      if (data.rc !== 0 || data.data === null) {
+        lastErr = `API rc=${data.rc}`;
+        console.warn(`[eastmoney] ${label} attempt ${attempt+1}/${retries+1}: ${lastErr}`);
+        continue;
+      }
+      return data;
     } catch (err: any) {
       lastErr = err.message;
+      if (lastErr.includes('socket') || lastErr.includes('closed')) {
+        socketFails++;
+      }
       console.warn(`[eastmoney] ${label} attempt ${attempt+1}/${retries+1}: ${err.message}`);
-      continue;
     }
-
-    let data: any;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      lastErr = `invalid JSON: ${text.slice(0, 200)}`;
-      continue;
-    }
-
-    if (data.rc !== 0 || data.data === null) {
-      lastErr = `API rc=${data.rc}: ${text.slice(0, 200)}`;
-      console.warn(`[eastmoney] ${label} attempt ${attempt+1}/${retries+1}: ${lastErr}`);
-      continue;
-    }
-    return data;
   }
   throw new Error(`[EastMoney] ${label}: ${lastErr}`);
+}
+
+/** Fallback: use system curl with HTTP/1.1 forced. */
+async function curlFetch(url: string): Promise<string> {
+  const proc = Bun.spawn(['curl', '-s', '--http1.1', '--max-time', '15',
+    '-H', `User-Agent: ${UA}`,
+    '-H', 'Referer: https://quote.eastmoney.com/',
+    '-H', 'Accept: */*',
+    url], { stdout: 'pipe', stderr: 'pipe' });
+  const stdout = await new Response(proc.stdout).text();
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    const stderr = await new Response(proc.stderr).text();
+    throw new Error(`curl exit ${exitCode}: ${stderr.slice(0, 200)}`);
+  }
+  return stdout;
 }
 
 // ---------------------------------------------------------------------------

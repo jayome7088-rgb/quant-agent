@@ -3,6 +3,7 @@ import type { RunnableConfig } from '@langchain/core/runnables';
 import { z } from 'zod';
 import { formatToolResult } from '../types.js';
 import { normalizeTicker, fetchChart, fetchQuote, OHLCVBar } from './eastmoney-api.js';
+import { fetchSinaQuote } from './sina-api.js';
 import { computeIndicators, extractTrainingMatrix, MODEL_FEATURE_NAMES } from './indicator-engine.js';
 import type { FundamentalSnapshot } from './indicator-engine.js';
 import { trainXGBoost } from './xgb-bridge.js';
@@ -136,7 +137,41 @@ export function createStockAnalyzer(): DynamicStructuredTool {
         onProgress?.(`东方财富行情获取失败，尝试备用数据源…`);
       }
 
-      // 2b. If East Money failed or returned zero, try Financial Datasets
+      // 2b. Cross-verify with Sina Finance (independent source, free, no key)
+      if (quotePrice > 0) {
+        try {
+          const sinaQuote = await fetchSinaQuote(symbol);
+          if (sinaQuote.price > 0) {
+            const diffPct = Math.abs(sinaQuote.price - quotePrice) / Math.max(sinaQuote.price, quotePrice) * 100;
+            if (diffPct > 10) {
+              console.warn(`[stock_analyzer] ⚠️ East Money=${quotePrice.toFixed(2)} vs Sina=${sinaQuote.price.toFixed(2)} (diff ${diffPct.toFixed(1)}%)`);
+            } else {
+              console.log(`[stock_analyzer] ✓ East Money=${quotePrice.toFixed(2)} Sina=${sinaQuote.price.toFixed(2)} (diff ${diffPct.toFixed(1)}%)`);
+            }
+          }
+        } catch (sinaErr) {
+          console.warn(`[stock_analyzer] Sina verification unavailable: ${sinaErr instanceof Error ? sinaErr.message : String(sinaErr)}`);
+        }
+      }
+
+      // 2c. If East Money failed, try Sina as primary
+      if (quotePrice <= 0) {
+        try {
+          onProgress?.('Fetching quote (Sina Finance)...');
+          const sinaQuote = await fetchSinaQuote(symbol);
+          if (sinaQuote.price > 0) {
+            quote = sinaQuote;
+            quotePrice = sinaQuote.price;
+            quoteSource = 'sina';
+            console.log(`[stock_analyzer] Using Sina Finance price: ${sinaQuote.price} (name: ${sinaQuote.symbol})`);
+            onProgress?.(`使用新浪财经价格: ${sinaQuote.price}`);
+          }
+        } catch (sinaErr) {
+          console.warn(`[stock_analyzer] Sina Finance FAILED: ${sinaErr instanceof Error ? sinaErr.message : String(sinaErr)}`);
+        }
+      }
+
+      // 2d. If both East Money and Sina failed, try Financial Datasets
       if (quotePrice <= 0) {
         try {
           onProgress?.('Fetching quote (Financial Datasets)...');
