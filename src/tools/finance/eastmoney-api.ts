@@ -198,20 +198,25 @@ export async function fetchChart(
   // Do NOT apply a divisor here — it would shrink A-shares by 100x and
   // HK stocks by 1000x, making prices near-zero and triggering synthetic fallback.
 
+  // Try multiple secid formats × fqt values (rc=102 often means fqt unsupported)
+  const fqtValues = [1, 0]; // forward-adjusted, then unadjusted
   const secids = altSecids(secid, market);
   let data: any = null;
   let lastErr = '';
-  for (const sid of secids) {
-    const url = 'http://push2his.eastmoney.com/api/qt/stock/kline/get'
-      + `?secid=${sid}`
-      + '&fields1=f1,f2,f3,f4,f5,f6'
-      + '&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61'
-      + `&klt=${klt}&fqt=1&lmt=${lmt}`;
-    try {
-      data = await fetchJson(url, `chart ${ticker} (${interval}, ${range}) via ${sid}`);
-      break;
-    } catch (e) {
-      lastErr = e instanceof Error ? e.message : String(e);
+  outer:
+  for (const fqt of fqtValues) {
+    for (const sid of secids) {
+      const url = 'http://push2his.eastmoney.com/api/qt/stock/kline/get'
+        + `?secid=${sid}`
+        + '&fields1=f1,f2,f3,f4,f5,f6'
+        + '&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61'
+        + `&klt=${klt}&fqt=${fqt}&lmt=${lmt}`;
+      try {
+        data = await fetchJson(url, `chart ${ticker} (${interval}, ${range}) sid=${sid} fqt=${fqt}`);
+        break outer;
+      } catch (e) {
+        lastErr = e instanceof Error ? e.message : String(e);
+      }
     }
   }
   if (!data) throw new Error(lastErr);

@@ -48,30 +48,46 @@ export async function fetchSinaQuote(ticker: string): Promise<QuoteResult> {
   const sina = toSinaSymbol(ticker);
   if (!sina) throw new Error(`[Sina] Cannot map ticker: ${ticker}`);
 
-  const url = `http://hq.sinajs.cn/list=${sina.symbol}`;
-  console.log(`[sina] Fetching quote: ${url}`);
+  // Some HK stocks need 5-digit code (09868→hk09868), others need stripped (09626→hk9626)
+  let symbols = [sina.symbol];
+  if (sina.prefix === 'hk') {
+    const code = sina.symbol.slice(2); // hk9868 → 9868
+    if (code.length < 5) {
+      symbols.push(`hk${code.padStart(5, '0')}`); // also try hk09868
+    }
+  }
 
   let text = '';
-  try {
-    const resp = await fetch(url, {
-      headers: {
-        'User-Agent': UA,
-        'Referer': 'https://finance.sina.com.cn/',
-        'Accept': '*/*',
-        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
-      },
-      signal: AbortSignal.timeout(10_000),
-    });
-    text = await resp.text();
-  } catch (err: any) {
-    throw new Error(`[Sina] Request failed: ${err.message}`);
+  let usedSymbol = '';
+  for (const sym of symbols) {
+    const url = `http://hq.sinajs.cn/list=${sym}`;
+    console.log(`[sina] Trying: ${url}`);
+    try {
+      const resp = await fetch(url, {
+        headers: {
+          'User-Agent': UA,
+          'Referer': 'https://finance.sina.com.cn/',
+          'Accept': '*/*',
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache',
+        },
+        signal: AbortSignal.timeout(10_000),
+      });
+      text = await resp.text();
+      if (text && !text.includes('FAILED') && !text.includes('""')) {
+        usedSymbol = sym;
+        break;
+      }
+    } catch (err: any) {
+      if (sym === symbols[symbols.length - 1]) throw new Error(`[Sina] Request failed: ${err.message}`);
+    }
   }
 
   if (!text || text.includes('FAILED') || text.includes('""')) {
-    throw new Error(`[Sina] No data for ${ticker} (symbol: ${sina.symbol})`);
+    throw new Error(`[Sina] No data for ${ticker} (tried: ${symbols.join(', ')})`);
   }
+  console.log(`[sina] Success with symbol: ${usedSymbol}`);
 
   // Parse: var hq_str_hk09626="NAME,OPEN,PREV_CLOSE,PRICE,HIGH,LOW,...,VOLUME,..."
   const match = text.match(/"([^"]*)"/);
