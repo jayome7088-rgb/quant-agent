@@ -121,42 +121,74 @@ export function createStockAnalyzer(): DynamicStructuredTool {
 
       let useSynthetic = false;
 
-      // 2. Get current quote from East Money
-      onProgress?.('Fetching quote (East Money)...');
+      // 2. Get current quote — try East Money, fallback to Financial Datasets
+      onProgress?.('Fetching quote...');
       let quote: { symbol: string; price: number; change: number; changePercent: number; dayHigh: number; dayLow: number; volume: number; marketTime: number } = null!;
-      let quotePrice = 100;
-      let quoteSource = 'eastmoney';
+      let quotePrice = 0;
+      let quoteSource = 'none';
+
       try {
         quote = await fetchQuote(symbol);
-        quotePrice = quote.price > 0 ? quote.price : 100;
-      } catch {
-        // quotePrice stays at 100 fallback
+        quotePrice = quote.price > 0 ? quote.price : 0;
+        quoteSource = 'eastmoney';
+      } catch (emErr) {
+        console.warn(`[stock_analyzer] East Money quote FAILED for ${symbol}: ${emErr instanceof Error ? emErr.message : String(emErr)}`);
+        onProgress?.(`东方财富行情获取失败，尝试备用数据源…`);
       }
 
-      // 2b. Cross-verify with Financial Datasets API
-      try {
-        onProgress?.('Verifying quote (Financial Datasets)...');
-        const apiModule = await import('./api.js');
-        const { data: fdData } = await apiModule.api.get('/prices/snapshot/', { ticker: symbol }, { cacheable: true, ttlMs: 300000 });
-        const snap = (fdData as Record<string, unknown>).snapshot || fdData;
-        const fdPrice = (snap as Record<string, unknown>).close ?? (snap as Record<string, unknown>).price;
-        if (typeof fdPrice === 'number' && fdPrice > 0) {
-          const diffPct = Math.abs(fdPrice - quotePrice) / Math.max(fdPrice, quotePrice) * 100;
-          if (diffPct > 10) {
-            console.warn(`[stock_analyzer] ⚠️  PRICE MISMATCH: East Money=${quotePrice.toFixed(2)} vs Financial Datasets=${fdPrice.toFixed(2)} (diff ${diffPct.toFixed(1)}%)`);
-            onProgress?.(`⚠️ 数据源价格不一致: 东方财富=${quotePrice.toFixed(2)} vs Financial Datasets=${fdPrice.toFixed(2)}`);
-          } else {
-            console.log(`[stock_analyzer] Price verified: East Money=${quotePrice.toFixed(2)} Financial Datasets=${fdPrice.toFixed(2)} (diff ${diffPct.toFixed(1)}%)`);
-          }
-          // Use Financial Datasets price if East Money seems wrong (>50% diff)
-          if (diffPct > 50 && quotePrice === 100) {
+      // 2b. If East Money failed or returned zero, try Financial Datasets
+      if (quotePrice <= 0) {
+        try {
+          onProgress?.('Fetching quote (Financial Datasets)...');
+          const apiModule = await import('./api.js');
+          const { data: fdData } = await apiModule.api.get('/prices/snapshot/', { ticker: symbol }, { cacheable: true, ttlMs: 300000 });
+          const snap = (fdData as Record<string, unknown>).snapshot || fdData;
+          const s = snap as Record<string, unknown>;
+          const fdPrice = (s.close ?? s.price ?? 0) as number;
+          if (fdPrice > 0) {
             quotePrice = fdPrice;
             quoteSource = 'financial_datasets';
-            onProgress?.('⚠️ 使用 Financial Datasets 价格（东方财富不可用）');
+            // Build minimal quote from Financial Datasets snapshot
+            quote = {
+              symbol, price: fdPrice,
+              change: 0, changePercent: 0,
+              dayHigh: (s.high as number) ?? fdPrice,
+              dayLow: (s.low as number) ?? fdPrice,
+              volume: (s.volume as number) ?? 0,
+              marketTime: Math.floor(Date.now() / 1000),
+            };
+            console.log(`[stock_analyzer] Using Financial Datasets price: ${fdPrice}`);
+            onProgress?.(`使用 Financial Datasets 价格: ${fdPrice}`);
           }
+        } catch (fdErr) {
+          console.warn(`[stock_analyzer] Financial Datasets also FAILED for ${symbol}: ${fdErr instanceof Error ? fdErr.message : String(fdErr)}`);
         }
-      } catch {
-        // Financial Datasets unavailable — continue with East Money only
+      }
+
+      // 2c. Cross-verify if both sources available
+      if (quoteSource === 'eastmoney' && quotePrice > 0) {
+        try {
+          const apiModule = await import('./api.js');
+          const { data: fdData } = await apiModule.api.get('/prices/snapshot/', { ticker: symbol }, { cacheable: true, ttlMs: 300000 });
+          const snap = (fdData as Record<string, unknown>).snapshot || fdData;
+          const fdPrice = (snap as Record<string, unknown>).close ?? (snap as Record<string, unknown>).price;
+          if (typeof fdPrice === 'number' && fdPrice > 0) {
+            const diffPct = Math.abs(fdPrice - quotePrice) / Math.max(fdPrice, quotePrice) * 100;
+            if (diffPct > 10) {
+              console.warn(`[stock_analyzer] ⚠️  PRICE MISMATCH: East Money=${quotePrice.toFixed(2)} vs Financial Datasets=${fdPrice.toFixed(2)} (diff ${diffPct.toFixed(1)}%)`);
+            } else {
+              console.log(`[stock_analyzer] Price verified: East Money=${quotePrice.toFixed(2)} Financial Datasets=${fdPrice.toFixed(2)}`);
+            }
+          }
+        } catch { /* verification optional */ }
+      }
+
+      // If all sources failed, use synthetic fallback
+      if (quotePrice <= 0) {
+        quotePrice = 100;
+        quoteSource = 'synthetic';
+        console.warn(`[stock_analyzer] ALL data sources FAILED for ${symbol} — using synthetic price 100`);
+        onProgress?.(`⚠️ 所有数据源均不可用，使用合成数据`);
       }
 
       // Ticker-based seed for synthetic data — prevents identical reports for different stocks

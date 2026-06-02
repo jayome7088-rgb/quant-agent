@@ -85,29 +85,42 @@ export function normalizeTicker(raw: string): { symbol: string; market: string; 
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
 
-async function fetchJson(url: string, label: string): Promise<any> {
-  let text = '';
-  try {
-    const resp = await fetch(url, {
-      headers: { 'User-Agent': UA, 'Referer': 'https://quote.eastmoney.com/' },
-      signal: AbortSignal.timeout(15_000),
-    });
-    text = await resp.text();
-  } catch (err: any) {
-    throw new Error(`[EastMoney] ${label}: request failed — ${err.message}`);
-  }
+async function fetchJson(url: string, label: string, retries = 2): Promise<any> {
+  let lastErr = '';
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (attempt > 0) {
+      // Rate-limit backoff: 500ms, 1000ms
+      await new Promise(r => setTimeout(r, attempt * 500));
+    }
+    let text = '';
+    try {
+      const resp = await fetch(url, {
+        headers: { 'User-Agent': UA, 'Referer': 'https://quote.eastmoney.com/' },
+        signal: AbortSignal.timeout(15_000),
+      });
+      text = await resp.text();
+    } catch (err: any) {
+      lastErr = err.message;
+      console.warn(`[eastmoney] ${label} attempt ${attempt+1}/${retries+1}: ${err.message}`);
+      continue;
+    }
 
-  let data: any;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    throw new Error(`[EastMoney] ${label}: invalid JSON — ${text.slice(0, 200)}`);
-  }
+    let data: any;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      lastErr = `invalid JSON: ${text.slice(0, 200)}`;
+      continue;
+    }
 
-  if (data.rc !== 0 || data.data === null) {
-    throw new Error(`[EastMoney] ${label}: API error (rc=${data.rc}) — ${text.slice(0, 200)}`);
+    if (data.rc !== 0 || data.data === null) {
+      lastErr = `API rc=${data.rc}: ${text.slice(0, 200)}`;
+      console.warn(`[eastmoney] ${label} attempt ${attempt+1}/${retries+1}: ${lastErr}`);
+      continue;
+    }
+    return data;
   }
-  return data;
+  throw new Error(`[EastMoney] ${label}: ${lastErr}`);
 }
 
 // ---------------------------------------------------------------------------
