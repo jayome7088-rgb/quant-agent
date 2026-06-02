@@ -121,15 +121,42 @@ export function createStockAnalyzer(): DynamicStructuredTool {
 
       let useSynthetic = false;
 
-      // 2. Get current quote FIRST (lightweight) — use its price for synthetic fallback
-      onProgress?.('Fetching quote...');
+      // 2. Get current quote from East Money
+      onProgress?.('Fetching quote (East Money)...');
       let quote: { symbol: string; price: number; change: number; changePercent: number; dayHigh: number; dayLow: number; volume: number; marketTime: number } = null!;
       let quotePrice = 100;
+      let quoteSource = 'eastmoney';
       try {
         quote = await fetchQuote(symbol);
         quotePrice = quote.price > 0 ? quote.price : 100;
       } catch {
         // quotePrice stays at 100 fallback
+      }
+
+      // 2b. Cross-verify with Financial Datasets API
+      try {
+        onProgress?.('Verifying quote (Financial Datasets)...');
+        const apiModule = await import('./api.js');
+        const { data: fdData } = await apiModule.api.get('/prices/snapshot/', { ticker: symbol }, { cacheable: true, ttlMs: 300000 });
+        const snap = (fdData as Record<string, unknown>).snapshot || fdData;
+        const fdPrice = (snap as Record<string, unknown>).close ?? (snap as Record<string, unknown>).price;
+        if (typeof fdPrice === 'number' && fdPrice > 0) {
+          const diffPct = Math.abs(fdPrice - quotePrice) / Math.max(fdPrice, quotePrice) * 100;
+          if (diffPct > 10) {
+            console.warn(`[stock_analyzer] ⚠️  PRICE MISMATCH: East Money=${quotePrice.toFixed(2)} vs Financial Datasets=${fdPrice.toFixed(2)} (diff ${diffPct.toFixed(1)}%)`);
+            onProgress?.(`⚠️ 数据源价格不一致: 东方财富=${quotePrice.toFixed(2)} vs Financial Datasets=${fdPrice.toFixed(2)}`);
+          } else {
+            console.log(`[stock_analyzer] Price verified: East Money=${quotePrice.toFixed(2)} Financial Datasets=${fdPrice.toFixed(2)} (diff ${diffPct.toFixed(1)}%)`);
+          }
+          // Use Financial Datasets price if East Money seems wrong (>50% diff)
+          if (diffPct > 50 && quotePrice === 100) {
+            quotePrice = fdPrice;
+            quoteSource = 'financial_datasets';
+            onProgress?.('⚠️ 使用 Financial Datasets 价格（东方财富不可用）');
+          }
+        }
+      } catch {
+        // Financial Datasets unavailable — continue with East Money only
       }
 
       // Ticker-based seed for synthetic data — prevents identical reports for different stocks
