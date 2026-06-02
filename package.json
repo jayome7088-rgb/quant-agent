@@ -1,6 +1,6 @@
 {
   "name": "quant-agent",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "QuantAgent — autonomous AI agent for quantitative financial research. A refined fork of virattt/dexter.",
   "type": "module",
   "main": "src/index.tsx",
