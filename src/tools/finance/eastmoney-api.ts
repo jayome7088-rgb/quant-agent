@@ -147,8 +147,10 @@ export async function fetchChart(
   const { symbol, market, secid } = normalizeTicker(ticker);
   const klt = toKlt(interval);
   const lmt = rangeToLimit(range, interval);
-  // K-line prices for A-shares/HK may need divisor (same as quote API)
-  const klineDivisor = market === 'HK' ? 1000 : market === 'SS' || market === 'SZ' ? 100 : 1;
+  // NOTE: kline API (push2his) returns prices in correct decimal format
+  // for ALL markets. The divisor is ONLY needed for the quote API (push2).
+  // Do NOT apply a divisor here — it would shrink A-shares by 100x and
+  // HK stocks by 1000x, making prices near-zero and triggering synthetic fallback.
 
   const url = 'http://push2his.eastmoney.com/api/qt/stock/kline/get'
     + `?secid=${secid}`
@@ -177,10 +179,10 @@ export async function fetchChart(
 
     quotes.push({
       timestamp: ts,
-      open: parseFloat(parts[1]) / klineDivisor,
-      close: parseFloat(parts[2]) / klineDivisor,
-      high: parseFloat(parts[3]) / klineDivisor,
-      low: parseFloat(parts[4]) / klineDivisor,
+      open: parseFloat(parts[1]),
+      close: parseFloat(parts[2]),
+      high: parseFloat(parts[3]),
+      low: parseFloat(parts[4]),
       volume: parseInt(parts[5], 10) || 0,
     });
   }

@@ -45,6 +45,15 @@ const StockAnalyzerInputSchema = z.object({
   interval: z.enum(['1m', '5m', '15m', '30m', '1h']).default('5m').describe("Intraday interval for real-time data. Default 5m."),
 });
 
+/** Simple string hash → positive integer seed for deterministic synthetic data. */
+function hashTicker(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h) || 1;
+}
+
 /** Pick the first defined numeric value from an object using candidate keys. */
 function pickNum(obj: Record<string, unknown>, ...keys: string[]): number | undefined {
   for (const k of keys) {
@@ -114,16 +123,17 @@ export function createStockAnalyzer(): DynamicStructuredTool {
 
       // 2. Get current quote FIRST (lightweight) — use its price for synthetic fallback
       onProgress?.('Fetching quote...');
-      // 2. Get current quote FIRST (lightweight) — use its price for synthetic fallback
-      onProgress?.('Fetching quote...');
       let quote: { symbol: string; price: number; change: number; changePercent: number; dayHigh: number; dayLow: number; volume: number; marketTime: number } = null!;
       let quotePrice = 100;
       try {
         quote = await fetchQuote(symbol);
-        quotePrice = quote.price;
+        quotePrice = quote.price > 0 ? quote.price : 100;
       } catch {
         // quotePrice stays at 100 fallback
       }
+
+      // Ticker-based seed for synthetic data — prevents identical reports for different stocks
+      const tickerSeed = hashTicker(symbol);
 
       // 3. Fetch intraday data
       onProgress?.(`Fetching intraday data for ${symbol}...`);
@@ -133,7 +143,7 @@ export function createStockAnalyzer(): DynamicStructuredTool {
         intradayBars = r.quotes;
       } catch (_err) {
         onProgress?.('Intraday fetch failed, using synthetic data...');
-        intradayBars = syntheticBars(78, quotePrice, 1);
+        intradayBars = syntheticBars(78, quotePrice, tickerSeed);
         useSynthetic = true;
       }
 
@@ -145,7 +155,7 @@ export function createStockAnalyzer(): DynamicStructuredTool {
         historicalBars = r.quotes;
       } catch (_err) {
         onProgress?.('Historical fetch failed, using synthetic data...');
-        historicalBars = syntheticBars(504, quotePrice, 42);
+        historicalBars = syntheticBars(504, quotePrice, tickerSeed + 1);
         useSynthetic = true;
       }
 
