@@ -118,6 +118,18 @@ export interface IndicatorFeatures {
   grossMargin: number[];
   netMargin: number[];
   roe: number[];
+  // Capital flow factors (OHLCV proxies)
+  largeOrderRatio: number[];
+  mainForceControl: number[];
+  capitalFlowMomentum: number[];
+  priceVolumeCorr: number[];
+  volumeMomentum: number[];
+  // Volume-price composite factors
+  rsiDivergence: number[];
+  bollingerBreakout: number[];
+  intradaySkew: number[];
+  volumeVariation: number[];
+  priceVolumeTension: number[];
   // Position / volume-based features
   pricePosition: number[];
   volumeConcentration: number[];
@@ -139,7 +151,7 @@ export interface IndicatorMatrix {
 
 /** Ordered list of feature names used for model training (matches column order in the matrix). */
 export const MODEL_FEATURE_NAMES = [
-  // Technical
+  // Technical (17→14, removed volatility/macdHistogram/atrNormalized as redundant)
   'limitUpDown',
   'bigBullishCandle',
   'bigBearishCandle',
@@ -148,15 +160,24 @@ export const MODEL_FEATURE_NAMES = [
   'drawdown',
   'volumeAnomaly',
   'volumeTrend',
-  'volatility',
   'atr',
   'smaRatio',
   'maCrossover',
   'rsi14',
   'macd',
-  'macdHistogram',
   'bollingerPosition',
-  'atrNormalized',
+  // Capital flow factors (new)
+  'largeOrderRatio',
+  'mainForceControl',
+  'capitalFlowMomentum',
+  'priceVolumeCorr',
+  'volumeMomentum',
+  // Volume-price composite factors (new)
+  'rsiDivergence',
+  'bollingerBreakout',
+  'intradaySkew',
+  'volumeVariation',
+  'priceVolumeTension',
   // Position
   'pricePosition',
   'volumeConcentration',
@@ -274,6 +295,18 @@ export function computeIndicators(bars: OHLCVBar[], market = 'US', fundamentals?
     grossMargin: new Array(n).fill(NaN),
     netMargin: new Array(n).fill(NaN),
     roe: new Array(n).fill(NaN),
+    // Capital flow
+    largeOrderRatio: new Array(n).fill(NaN),
+    mainForceControl: new Array(n).fill(NaN),
+    capitalFlowMomentum: new Array(n).fill(NaN),
+    priceVolumeCorr: new Array(n).fill(NaN),
+    volumeMomentum: new Array(n).fill(NaN),
+    // Volume-price composite
+    rsiDivergence: new Array(n).fill(NaN),
+    bollingerBreakout: new Array(n).fill(NaN),
+    intradaySkew: new Array(n).fill(NaN),
+    volumeVariation: new Array(n).fill(NaN),
+    priceVolumeTension: new Array(n).fill(NaN),
     // Position
     pricePosition: new Array(n).fill(NaN),
     volumeConcentration: new Array(n).fill(NaN),
@@ -357,6 +390,98 @@ export function computeIndicators(bars: OHLCVBar[], market = 'US', fundamentals?
         f.volumeConcentration[i] = recentVol / longVol;
       }
     }
+
+    // Intraday skew: (high-close)/(close-low), >1 = selling pressure, <1 = buying support
+    const downRange = c - l;
+    if (downRange > 0) {
+      f.intradaySkew[i] = (h - c) / downRange;
+    }
+
+    // Price-volume tension: normalized directional volume
+    if (o > 0 && isFinite(volSma20[i]) && volSma20[i] > 0) {
+      f.priceVolumeTension[i] = ((c - o) / o) * (v / volSma20[i]);
+    }
+
+    // Bollinger breakout: normalized distance from mid band
+    if (isFinite(bbUpper[i]) && isFinite(bbLower[i]) && bbUpper[i] !== bbLower[i]) {
+      f.bollingerBreakout[i] = (c - sma20[i]) / (bbUpper[i] - bbLower[i]);
+    }
+
+    // Volume momentum: 5-day volume trend acceleration
+    if (i >= 5 && isFinite(volumeTrend[i])) {
+      const prevTrend = isFinite(volumeTrend[i - 5]) ? volumeTrend[i - 5] : 0;
+      f.volumeMomentum[i] = volumeTrend[i] - prevTrend;
+    }
+  }
+
+  // Second-pass multi-bar computations
+  // Capital flow momentum: rate of change of volume anomaly over 5 days
+  for (let i = 5; i < n; i++) {
+    if (isFinite(f.volumeAnomaly[i]) && isFinite(f.volumeAnomaly[i - 5])) {
+      f.capitalFlowMomentum[i] = f.volumeAnomaly[i] - f.volumeAnomaly[i - 5];
+    }
+  }
+
+  // Large order ratio: K-line body dominance × volume intensity (proxy)
+  for (let i = 0; i < n; i++) {
+    const range = highs[i] - lows[i];
+    if (range > 0 && isFinite(volSma20[i]) && volSma20[i] > 0) {
+      const bodyRatio = Math.abs(closes[i] - opens[i]) / range; // 0-1
+      f.largeOrderRatio[i] = bodyRatio * (volumes[i] / volSma20[i]);
+    }
+  }
+
+  // Main force control: volume concentration × price momentum
+  for (let i = 20; i < n; i++) {
+    if (isFinite(f.volumeConcentration[i]) && closes[i - 20] > 0) {
+      const mom20 = (closes[i] - closes[i - 20]) / closes[i - 20];
+      f.mainForceControl[i] = f.volumeConcentration[i] * mom20;
+    }
+  }
+
+  // Price-volume Pearson correlation (20-day rolling, negative factor)
+  for (let i = 20; i < n; i++) {
+    const cSlice = closes.slice(i - 19, i + 1);
+    const vSlice = volumes.slice(i - 19, i + 1);
+    const cMean = mean(cSlice);
+    const vMean = mean(vSlice);
+    let cov = 0, cVar = 0, vVar = 0;
+    for (let j = 0; j < 20; j++) {
+      const cDiff = cSlice[j] - cMean;
+      const vDiff = vSlice[j] - vMean;
+      cov += cDiff * vDiff;
+      cVar += cDiff * cDiff;
+      vVar += vDiff * vDiff;
+    }
+    if (cVar > 0 && vVar > 0) {
+      f.priceVolumeCorr[i] = cov / Math.sqrt(cVar * vVar);
+    }
+  }
+
+  // Volume variation (CV of volume over 5 days, %)
+  for (let i = 5; i < n; i++) {
+    const vSlice = volumes.slice(i - 4, i + 1);
+    const vMean = mean(vSlice);
+    if (vMean > 0) {
+      f.volumeVariation[i] = (stddev(vSlice, vMean) / vMean) * 100;
+    }
+  }
+
+  // RSI divergence: price makes new high but RSI doesn't (bearish), or vice versa
+  for (let i = 20; i < n; i++) {
+    const price20High = Math.max(...closes.slice(i - 19, i + 1));
+    const price20Low = Math.min(...closes.slice(i - 19, i + 1));
+    const rsi20High = Math.max(...f.rsi14.slice(i - 19, i + 1).filter(isFinite));
+    const rsi20Low = Math.min(...f.rsi14.slice(i - 19, i + 1).filter(isFinite));
+
+    const priceAtHigh = closes[i] >= price20High * 0.99;
+    const priceAtLow = closes[i] <= price20Low * 1.01;
+    const rsiAtHigh = f.rsi14[i] >= rsi20High * 0.99;
+    const rsiAtLow = f.rsi14[i] <= rsi20Low * 1.01;
+
+    if (priceAtHigh && !rsiAtHigh) f.rsiDivergence[i] = -1;      // bearish divergence
+    else if (priceAtLow && !rsiAtLow) f.rsiDivergence[i] = 1;    // bullish divergence
+    else f.rsiDivergence[i] = 0;
   }
 
   // Fill fundamental features (constant across all bars)
@@ -533,6 +658,116 @@ function computeATR(
   }
 
   return out;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Feature preprocessing pipeline
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Fill NaN values with column-wise median. */
+export function medianImpute(X: number[][]): number[][] {
+  if (X.length === 0) return X;
+  const cols = X[0].length;
+  const result = X.map(row => [...row]);
+
+  for (let j = 0; j < cols; j++) {
+    const vals: number[] = [];
+    for (let i = 0; i < result.length; i++) {
+      if (isFinite(result[i][j])) vals.push(result[i][j]);
+    }
+    if (vals.length === 0) continue;
+    vals.sort((a, b) => a - b);
+    const median = vals.length % 2 === 0
+      ? (vals[vals.length / 2 - 1] + vals[vals.length / 2]) / 2
+      : vals[Math.floor(vals.length / 2)];
+
+    for (let i = 0; i < result.length; i++) {
+      if (!isFinite(result[i][j])) result[i][j] = median;
+    }
+  }
+  return result;
+}
+
+/** Z-score standardize: (x - mean) / std. Returns standardized copy. */
+export function zscoreNormalize(X: number[][]): number[][] {
+  if (X.length === 0) return X;
+  const cols = X[0].length;
+  const result = X.map(row => [...row]);
+
+  for (let j = 0; j < cols; j++) {
+    const vals = result.map(r => r[j]).filter(isFinite);
+    if (vals.length === 0) continue;
+    const m = mean(vals);
+    const s = stddev(vals, m);
+    if (s === 0) continue;
+    for (let i = 0; i < result.length; i++) {
+      if (isFinite(result[i][j])) result[i][j] = (result[i][j] - m) / s;
+    }
+  }
+  return result;
+}
+
+/** Pearson correlation between two arrays. */
+function pearson(a: number[], b: number[]): number {
+  const n = Math.min(a.length, b.length);
+  if (n < 3) return 0;
+  const aMean = mean(a.slice(0, n));
+  const bMean = mean(b.slice(0, n));
+  let cov = 0, aVar = 0, bVar = 0;
+  for (let i = 0; i < n; i++) {
+    const aDiff = a[i] - aMean;
+    const bDiff = b[i] - bMean;
+    cov += aDiff * bDiff;
+    aVar += aDiff * aDiff;
+    bVar += bDiff * bDiff;
+  }
+  if (aVar === 0 || bVar === 0) return 0;
+  return cov / Math.sqrt(aVar * bVar);
+}
+
+/**
+ * Filter highly correlated features (r > threshold).
+ * For each correlated pair, keep the feature with higher IC (correlation with y).
+ * Returns filtered MODEL_FEATURE_NAMES and the corresponding column mask.
+ */
+export function filterCorrelatedFeatures(
+  X: number[][], y: number[], names: string[], threshold = 0.7,
+): { filteredNames: string[]; columnMask: number[] } {
+  if (X.length === 0) return { filteredNames: names, columnMask: names.map((_, i) => i) };
+
+  const cols = X[0].length;
+  // Compute IC (Information Coefficient = Pearson correlation with target) for each feature
+  const ic: number[] = [];
+  for (let j = 0; j < cols; j++) {
+    const col = X.map(r => r[j]);
+    ic.push(Math.abs(pearson(col, y)));
+  }
+
+  // Build correlation matrix and greedily drop features
+  const keep: boolean[] = new Array(cols).fill(true);
+  for (let j = 0; j < cols; j++) {
+    if (!keep[j]) continue;
+    for (let k = j + 1; k < cols; k++) {
+      if (!keep[k]) continue;
+      const r = Math.abs(pearson(
+        X.map(row => row[j]),
+        X.map(row => row[k]),
+      ));
+      if (r > threshold) {
+        // Drop the one with lower IC
+        if (ic[j] >= ic[k]) {
+          keep[k] = false;
+        } else {
+          keep[j] = false;
+          break; // j dropped, move to next j
+        }
+      }
+    }
+  }
+
+  const filteredNames = names.filter((_, i) => keep[i]);
+  const columnMask = keep.map((k, i) => k ? i : -1).filter(i => i >= 0);
+  return { filteredNames, columnMask };
 }
 
 /**
