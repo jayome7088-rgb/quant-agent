@@ -347,3 +347,24 @@ console.log(`   Chart API:  POST http://localhost:${PORT}/api/chart`);
 console.log(`   History:     http://localhost:${PORT}/api/history`);
 console.log(`   Strategy:    http://localhost:${PORT}/api/strategy`);
 console.log(`  ═══════════════════════════\n`);
+
+// Background: train universal model if not exists
+(async () => {
+  try {
+    const { isModelAvailable, ensureModel } = await import('../tools/finance/pool-trainer.js');
+    if (!isModelAvailable()) {
+      console.log('[server] No universal model found — training in background...');
+      console.log('[server] This may take 2-5 minutes (fetching 70+ stocks).');
+      ensureModel().then(m => {
+        console.log(`[server] Universal model ready: ${m.totalSamples} samples, out-sample accuracy ${(m.outSampleAccuracy*100).toFixed(2)}%`);
+      });
+    } else {
+      console.log('[server] Universal model found — loading...');
+      ensureModel().then(m => {
+        console.log(`[server] Model loaded: ${m.totalSamples} samples, out-sample accuracy ${(m.outSampleAccuracy*100).toFixed(2)}%`);
+      });
+    }
+  } catch (e) {
+    console.log('[server] Model training deferred (will train on first query):', e instanceof Error ? e.message : String(e));
+  }
+})();

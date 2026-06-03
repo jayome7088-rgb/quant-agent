@@ -6,7 +6,7 @@ import { OHLCVBar } from './eastmoney-api.js';
 import { fetchSinaQuote, fetchSinaChart } from './sina-api.js';
 import { computeIndicators, extractTrainingMatrix, MODEL_FEATURE_NAMES } from './indicator-engine.js';
 import type { FundamentalSnapshot } from './indicator-engine.js';
-import { trainXGBoost } from './xgb-bridge.js';
+import { predictWithUniversalModel } from './pool-trainer.js';
 import { runBacktest } from './backtest-engine.js';
 import { formatStockAnalysis, buildPlotData } from './output-formatter.js';
 import { loadStrategyConfig } from './strategy-config.js';
@@ -219,20 +219,28 @@ export function createStockAnalyzer(): DynamicStructuredTool {
 
       // 7. Extract training matrix
       const { X, y } = extractTrainingMatrix(indicators);
-      if (X.length < strategy.training.windowSize) {
+      if (X.length < 60) {
         return formatToolResult({
-          error: `Insufficient training samples: ${X.length} valid rows (need at least ${strategy.training.windowSize}). Try a stock with more trading history.`,
+          error: `Insufficient training samples: ${X.length} valid rows (need at least 60).`,
         }, []);
       }
 
-      // 8. Train XGBoost
-      onProgress?.('Training XGBoost prediction model...');
+      // 8. Predict with universal model (pre-trained on HSI pool)
+      onProgress?.('Predicting with universal model...');
       let modelOutput;
       try {
-        modelOutput = await trainXGBoost(X, y, MODEL_FEATURE_NAMES, strategy.training);
+        const predResult = await predictWithUniversalModel(X, MODEL_FEATURE_NAMES);
+        modelOutput = {
+          coefficients: [],
+          featureImportance: predResult.featureImportance,
+          rollingResults: [],
+          aggregateMetrics: { avgAccuracy: 0, avgPrecision: 0, avgRecall: 0, avgF1: 0 },
+          allPredictions: predResult.allPredictions,
+          nextDayProbability: predResult.nextDayProbability,
+        };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        return formatToolResult({ error: `Model training failed: ${msg}` }, []);
+        return formatToolResult({ error: `Model prediction failed: ${msg}` }, []);
       }
 
       // 9. Run backtest
