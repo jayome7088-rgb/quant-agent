@@ -156,7 +156,7 @@ function formatRealTime(r: StockAnalysisOutput): string {
     lines.push('日内最低: 数据暂未获取');
     lines.push('成交量: 数据暂未获取');
   }
-  lines.push('数据源: 东方财富 (East Money)');
+  lines.push('数据源: 新浪财经 (Sina Finance)');
 
   return lines.join('\n');
 }

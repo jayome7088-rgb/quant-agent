@@ -2,8 +2,8 @@ import { DynamicStructuredTool } from '@langchain/core/tools';
 import type { RunnableConfig } from '@langchain/core/runnables';
 import { z } from 'zod';
 import { formatToolResult } from '../types.js';
-import { normalizeTicker, fetchChart, fetchQuote, OHLCVBar } from './eastmoney-api.js';
-import { fetchSinaQuote } from './sina-api.js';
+import { OHLCVBar } from './eastmoney-api.js';
+import { fetchSinaQuote, fetchSinaChart } from './sina-api.js';
 import { computeIndicators, extractTrainingMatrix, MODEL_FEATURE_NAMES } from './indicator-engine.js';
 import type { FundamentalSnapshot } from './indicator-engine.js';
 import { trainXGBoost } from './xgb-bridge.js';
@@ -38,7 +38,7 @@ Performs comprehensive stock technical analysis including intraday data, technic
 - Optionally specify intraday interval (1m/5m/15m/30m/1h, default 5m)
 - Returns comprehensive formatted analysis with disclaimer
 
-NOTE: This tool fetches data from East Money (东方财富) API and performs XGBoost training + backtesting. May take 10-30 seconds.
+NOTE: This tool fetches data from Sina Finance (新浪财经) API and performs XGBoost training + backtesting. May take 10-30 seconds.
 `.trim();
 
 const StockAnalyzerInputSchema = z.object({
@@ -108,7 +108,7 @@ function syntheticBars(n: number, startPrice = 180, seed = 42): OHLCVBar[] {
 export function createStockAnalyzer(): DynamicStructuredTool {
   return new DynamicStructuredTool({
     name: 'stock_analyzer',
-    description: `Comprehensive ML-based stock analysis tool. Performs: intraday data fetch, technical indicator computation, XGBoost prediction with rolling backtest, and generates a formatted analysis report. Use for stock analysis, trend prediction, buy/sell signals. Falls back to synthetic data if East Money is unreachable.`,
+    description: `Comprehensive ML-based stock analysis tool. Performs: intraday data fetch, technical indicator computation, XGBoost prediction with rolling backtest, and generates a formatted analysis report. Use for stock analysis, trend prediction, buy/sell signals. Falls back to synthetic data if Sina Finance is unreachable.`,
     schema: StockAnalyzerInputSchema,
     func: async (input, _runManager, config?: RunnableConfig) => {
       const onProgress = config?.metadata?.onProgress as ((msg: string) => void) | undefined;
@@ -116,139 +116,53 @@ export function createStockAnalyzer(): DynamicStructuredTool {
       const rawTicker = input.ticker.trim();
       const interval = input.interval ?? '5m';
 
-      // 1. Normalize ticker
-      onProgress?.('Normalizing ticker...');
-      const { symbol, market } = normalizeTicker(rawTicker);
+      // 1. Determine market from ticker pattern
+      const displaySymbol = rawTicker.toUpperCase();
+      const market = /^\d{6}$/.test(rawTicker) && rawTicker.startsWith('6') ? 'SS'
+        : /^\d{6}$/.test(rawTicker) ? 'SZ'
+        : /^\d{4,5}$/.test(rawTicker) ? 'HK'
+        : 'US';
 
       let useSynthetic = false;
 
-      // 2. Get current quote — try East Money, fallback to Financial Datasets
-      onProgress?.('Fetching quote...');
+      // 2. Get quote from Sina Finance (single source, max 1 retry)
+      onProgress?.('Fetching quote (Sina Finance)...');
       let quote: { symbol: string; price: number; change: number; changePercent: number; dayHigh: number; dayLow: number; volume: number; marketTime: number } = null!;
       let quotePrice = 0;
-      let quoteSource = 'none';
-
       try {
-        quote = await fetchQuote(symbol);
+        quote = await fetchSinaQuote(rawTicker);
         quotePrice = quote.price > 0 ? quote.price : 0;
-        quoteSource = 'eastmoney';
-      } catch (emErr) {
-        console.warn(`[stock_analyzer] East Money quote FAILED for ${symbol}: ${emErr instanceof Error ? emErr.message : String(emErr)}`);
-        onProgress?.(`东方财富行情获取失败，尝试备用数据源…`);
+      } catch (e) {
+        console.warn(`[stock_analyzer] Sina quote FAILED: ${e instanceof Error ? e.message : String(e)}`);
       }
 
-      // 2b. Cross-verify with Sina Finance (independent source, free, no key)
-      if (quotePrice > 0) {
-        try {
-          const sinaQuote = await fetchSinaQuote(symbol);
-          if (sinaQuote.price > 0) {
-            const diffPct = Math.abs(sinaQuote.price - quotePrice) / Math.max(sinaQuote.price, quotePrice) * 100;
-            if (diffPct > 10) {
-              console.warn(`[stock_analyzer] ⚠️ East Money=${quotePrice.toFixed(2)} vs Sina=${sinaQuote.price.toFixed(2)} (diff ${diffPct.toFixed(1)}%)`);
-            } else {
-              console.log(`[stock_analyzer] ✓ East Money=${quotePrice.toFixed(2)} Sina=${sinaQuote.price.toFixed(2)} (diff ${diffPct.toFixed(1)}%)`);
-            }
-          }
-        } catch (sinaErr) {
-          console.warn(`[stock_analyzer] Sina verification unavailable: ${sinaErr instanceof Error ? sinaErr.message : String(sinaErr)}`);
-        }
-      }
-
-      // 2c. If East Money failed, try Sina as primary
-      if (quotePrice <= 0) {
-        try {
-          onProgress?.('Fetching quote (Sina Finance)...');
-          const sinaQuote = await fetchSinaQuote(symbol);
-          if (sinaQuote.price > 0) {
-            quote = sinaQuote;
-            quotePrice = sinaQuote.price;
-            quoteSource = 'sina';
-            console.log(`[stock_analyzer] Using Sina Finance price: ${sinaQuote.price} (name: ${sinaQuote.symbol})`);
-            onProgress?.(`使用新浪财经价格: ${sinaQuote.price}`);
-          }
-        } catch (sinaErr) {
-          console.warn(`[stock_analyzer] Sina Finance FAILED: ${sinaErr instanceof Error ? sinaErr.message : String(sinaErr)}`);
-        }
-      }
-
-      // 2d. If both East Money and Sina failed, try Financial Datasets
-      if (quotePrice <= 0) {
-        try {
-          onProgress?.('Fetching quote (Financial Datasets)...');
-          const apiModule = await import('./api.js');
-          const { data: fdData } = await apiModule.api.get('/prices/snapshot/', { ticker: symbol }, { cacheable: true, ttlMs: 300000 });
-          const snap = (fdData as Record<string, unknown>).snapshot || fdData;
-          const s = snap as Record<string, unknown>;
-          const fdPrice = (s.close ?? s.price ?? 0) as number;
-          if (fdPrice > 0) {
-            quotePrice = fdPrice;
-            quoteSource = 'financial_datasets';
-            // Build minimal quote from Financial Datasets snapshot
-            quote = {
-              symbol, price: fdPrice,
-              change: 0, changePercent: 0,
-              dayHigh: (s.high as number) ?? fdPrice,
-              dayLow: (s.low as number) ?? fdPrice,
-              volume: (s.volume as number) ?? 0,
-              marketTime: Math.floor(Date.now() / 1000),
-            };
-            console.log(`[stock_analyzer] Using Financial Datasets price: ${fdPrice}`);
-            onProgress?.(`使用 Financial Datasets 价格: ${fdPrice}`);
-          }
-        } catch (fdErr) {
-          console.warn(`[stock_analyzer] Financial Datasets also FAILED for ${symbol}: ${fdErr instanceof Error ? fdErr.message : String(fdErr)}`);
-        }
-      }
-
-      // 2c. Cross-verify if both sources available
-      if (quoteSource === 'eastmoney' && quotePrice > 0) {
-        try {
-          const apiModule = await import('./api.js');
-          const { data: fdData } = await apiModule.api.get('/prices/snapshot/', { ticker: symbol }, { cacheable: true, ttlMs: 300000 });
-          const snap = (fdData as Record<string, unknown>).snapshot || fdData;
-          const fdPrice = (snap as Record<string, unknown>).close ?? (snap as Record<string, unknown>).price;
-          if (typeof fdPrice === 'number' && fdPrice > 0) {
-            const diffPct = Math.abs(fdPrice - quotePrice) / Math.max(fdPrice, quotePrice) * 100;
-            if (diffPct > 10) {
-              console.warn(`[stock_analyzer] ⚠️  PRICE MISMATCH: East Money=${quotePrice.toFixed(2)} vs Financial Datasets=${fdPrice.toFixed(2)} (diff ${diffPct.toFixed(1)}%)`);
-            } else {
-              console.log(`[stock_analyzer] Price verified: East Money=${quotePrice.toFixed(2)} Financial Datasets=${fdPrice.toFixed(2)}`);
-            }
-          }
-        } catch { /* verification optional */ }
-      }
-
-      // If all sources failed, use synthetic fallback
       if (quotePrice <= 0) {
         quotePrice = 100;
-        quoteSource = 'synthetic';
-        console.warn(`[stock_analyzer] ALL data sources FAILED for ${symbol} — using synthetic price 100`);
-        onProgress?.(`⚠️ 所有数据源均不可用，使用合成数据`);
+        useSynthetic = true;
+        onProgress?.('⚠️ 新浪行情获取失败，使用合成数据');
       }
 
-      // Ticker-based seed for synthetic data — prevents identical reports for different stocks
-      const tickerSeed = hashTicker(symbol);
+      // Ticker-based seed for synthetic data
+      const tickerSeed = hashTicker(rawTicker);
 
-      // 3. Fetch intraday data
-      onProgress?.(`Fetching intraday data for ${symbol}...`);
+      // 3. Fetch intraday data (Sina 5m K-line)
+      onProgress?.(`Fetching intraday data...`);
       let intradayBars: OHLCVBar[];
       try {
-        const r = await fetchChart(symbol, interval, '5d');
+        const r = await fetchSinaChart(rawTicker, '5m', '5d');
         intradayBars = r.quotes;
-      } catch (_err) {
-        onProgress?.('Intraday fetch failed, using synthetic data...');
+      } catch {
         intradayBars = syntheticBars(78, quotePrice, tickerSeed);
         useSynthetic = true;
       }
 
-      // 4. Fetch historical daily data
+      // 4. Fetch historical daily data (Sina daily K-line)
       onProgress?.('Fetching historical data...');
       let historicalBars: OHLCVBar[];
       try {
-        const r = await fetchChart(symbol, '1d', '2y');
+        const r = await fetchSinaChart(rawTicker, '1d', '2y');
         historicalBars = r.quotes;
-      } catch (_err) {
-        onProgress?.('Historical fetch failed, using synthetic data...');
+      } catch {
         historicalBars = syntheticBars(504, quotePrice, tickerSeed + 1);
         useSynthetic = true;
       }
@@ -263,7 +177,7 @@ export function createStockAnalyzer(): DynamicStructuredTool {
       if (!quote) {
         const b = intradayBars[intradayBars.length - 1];
         quote = {
-          symbol, price: b.close, change: b.close - intradayBars[0].open,
+          symbol: displaySymbol, price: b.close, change: b.close - intradayBars[0].open,
           changePercent: (b.close - intradayBars[0].open) / intradayBars[0].open * 100,
           dayHigh: Math.max(...intradayBars.map(x => x.high)),
           dayLow: Math.min(...intradayBars.map(x => x.low)),
@@ -277,7 +191,7 @@ export function createStockAnalyzer(): DynamicStructuredTool {
       let fundamentals: FundamentalSnapshot = {};
       try {
         const apiModule = await import('./api.js');
-        const { data } = await apiModule.api.get('/financial-metrics/snapshot/', { ticker: symbol }, { cacheable: true, ttlMs: 3600000 });
+        const { data } = await apiModule.api.get('/financial-metrics/snapshot/', { ticker: displaySymbol }, { cacheable: true, ttlMs: 3600000 });
         const snap = (data as Record<string, unknown>).snapshot || data;
         const s = snap as Record<string, unknown>;
         // Map API fields to our fundamental snapshot, cap extreme values
@@ -344,7 +258,7 @@ export function createStockAnalyzer(): DynamicStructuredTool {
         : new Date(intradayBars[0].timestamp * 1000).toISOString();
 
       const analysisOutput = {
-        ticker: symbol,
+        ticker: displaySymbol,
         market,
         currentPrice: quote.price,
         dayChange: quote.change,
@@ -375,12 +289,12 @@ export function createStockAnalyzer(): DynamicStructuredTool {
       }
 
       if (useSynthetic) {
-        formatted = `⚠️  **注意：东方财富 API 暂时不可用，当前使用合成数据演示。**\n\n${formatted}`;
+        formatted = `⚠️  **注意：新浪财经 API 暂时不可用，当前使用合成数据演示。**\n\n${formatted}`;
       }
 
       return formatToolResult(
         { data: formatted, plots: plotDataUrls },
-        [`https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}`],
+        [`https://finance.sina.com.cn/realstock/company/${displaySymbol.toLowerCase()}/nc.shtml`],
       );
     },
   });

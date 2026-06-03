@@ -54,6 +54,11 @@ async function handleAnalyzeSSE(url: URL): Promise<Response> {
     async start(controller) {
       const sse = new SSEController(controller);
 
+      // SSE heartbeat: send ping comment every 15s to prevent proxy/OS close
+      const heartbeat = setInterval(() => {
+        try { controller.enqueue(new TextEncoder().encode(': ping\n\n')); } catch { /* closed */ }
+      }, 15_000);
+
       try {
         const { createStockAnalyzer } = await import('../tools/finance/stock-analyzer.js');
         const tool = createStockAnalyzer();
@@ -116,6 +121,7 @@ async function handleAnalyzeSSE(url: URL): Promise<Response> {
         console.error(`[server] SSE analyze error: ${msg}`);
         sse.send('error', msg);
       } finally {
+        clearInterval(heartbeat);
         sse.close();
       }
     },
@@ -309,6 +315,7 @@ const PORT = parseInt(process.env.DEXTER_WEB_PORT || '3100', 10);
 
 Bun.serve({
   port: PORT,
+  idleTimeout: 30, // 30s timeout (was default 10s, too short for analysis)
   fetch(req) {
     const url = new URL(req.url);
 
