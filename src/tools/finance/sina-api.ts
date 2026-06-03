@@ -120,34 +120,58 @@ export async function fetchSinaQuote(ticker: string): Promise<QuoteResult> {
   }
 
   const fields = match[1].split(',');
-  console.log(`[sina] Raw: ${fields.slice(0, 9).join(',')}`);
+  console.log(`[sina] Raw fields (${fields.length}): ${fields.slice(0, 12).join('|')}`);
+
+  // GBK decode returns BOTH English + Chinese names → all indices shift by 1
+  // ASCII:  [name,       open, prevClose, price, high, low, change, change%, ..., volume]
+  // GBK:    [name_en, name_cn, open, prevClose, high, low, price, change, change%, ..., volume]
+  const hasChineseName = fields.length > 1 && /[^\x00-\x7F]/.test(fields[1] || '');
 
   if (sina.prefix === 'hk') {
-    // fields: name(0), open(1), prevClose(2), price(3), high(4), low(5), ..., volume(8)
-    const name = fields[0] || ticker;
-    const price = parseFloat(fields[3]) || 0;
-    const open = parseFloat(fields[1]) || 0;
-    const prevClose = parseFloat(fields[2]) || 0;
-    const high = parseFloat(fields[4]) || 0;
-    const low = parseFloat(fields[5]) || 0;
-    const volume = parseInt(fields[8], 10) || 0;
-    const change = price - prevClose;
-    const changePct = prevClose > 0 ? (change / prevClose) * 100 : 0;
+    const off = hasChineseName ? 1 : 0;
+    const name = hasChineseName ? (fields[1] || fields[0] || ticker) : (fields[0] || ticker);
+    const open = parseFloat(fields[1 + off]) || 0;
+    const prevClose = parseFloat(fields[2 + off]) || 0;
+    const high = parseFloat(fields[3 + off]) || 0;
+    const low = parseFloat(fields[4 + off]) || 0;
+    const price = parseFloat(fields[5 + off]) || 0;
+    const changeRaw = parseFloat(fields[6 + off]) || 0;
+    const changePctRaw = parseFloat(fields[7 + off]) || 0;
+    const volume = Math.abs(parseInt(fields[8 + off] || fields[9 + off], 10) || 0);
 
-    return { symbol: name, price: round(price), change: round(change), changePercent: round(changePct), dayHigh: round(high), dayLow: round(low), volume, marketTime: Math.floor(Date.now() / 1000) };
+    // Market hours: HK 09:30-12:00, 13:00-16:00 HKT (UTC+8)
+    const now = new Date();
+    const hktHour = (now.getUTCHours() + 8) % 24;
+    const hktMin = now.getUTCMinutes();
+    const hktTime = hktHour * 100 + hktMin;
+    const inSession = (hktTime >= 930 && hktTime <= 1200) || (hktTime >= 1300 && hktTime <= 1600);
+
+    console.log(`[sina] HK — off=${off} name=${name} open=${open} prev=${prevClose} hi=${high} lo=${low} price=${price} chg=${changeRaw} chg%=${changePctRaw} vol=${volume} ${inSession ? '交易中' : '已收盘'}`);
+
+    return {
+      symbol: name, price: round(price), change: round(changeRaw), changePercent: round(changePctRaw),
+      dayHigh: round(high), dayLow: round(low), volume, marketTime: Math.floor(Date.now() / 1000),
+    };
   }
 
   if (sina.prefix === 'sh' || sina.prefix === 'sz') {
-    const name = fields[0] || ticker;
-    const price = parseFloat(fields[3]) || 0;
-    const prevClose = parseFloat(fields[2]) || 0;
-    const high = parseFloat(fields[4]) || 0;
-    const low = parseFloat(fields[5]) || 0;
-    const volume = parseInt(fields[8], 10) || 0;
+    const off = hasChineseName ? 1 : 0;
+    const name = hasChineseName ? (fields[1] || fields[0] || ticker) : (fields[0] || ticker);
+    const open = parseFloat(fields[1 + off]) || 0;
+    const prevClose = parseFloat(fields[2 + off]) || 0;
+    const price = parseFloat(fields[3 + off]) || 0;
+    const high = parseFloat(fields[4 + off]) || 0;
+    const low = parseFloat(fields[5 + off]) || 0;
+    const volume = Math.abs(parseInt(fields[8 + off], 10) || 0);
     const change = price - prevClose;
     const changePct = prevClose > 0 ? (change / prevClose) * 100 : 0;
 
-    return { symbol: name, price: round(price), change: round(change), changePercent: round(changePct), dayHigh: round(high), dayLow: round(low), volume, marketTime: Math.floor(Date.now() / 1000) };
+    console.log(`[sina] A-share — off=${off} name=${name} price=${price} hi=${high} lo=${low}`);
+
+    return {
+      symbol: name, price: round(price), change: round(change), changePercent: round(changePct),
+      dayHigh: round(high), dayLow: round(low), volume, marketTime: Math.floor(Date.now() / 1000),
+    };
   }
 
   // US: name(0), price(1), change(2), change%(3), ..., high(6), low(7), ..., vol(10)
