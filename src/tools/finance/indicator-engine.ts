@@ -485,23 +485,23 @@ export function computeIndicators(bars: OHLCVBar[], market = 'US', fundamentals?
   }
 
   // Fill fundamental features (constant across all bars)
-  if (fundamentals) {
-    const pe = fundamentals.peRatio && fundamentals.peRatio > 0 ? fundamentals.peRatio : NaN;
-    const pb = fundamentals.pbRatio && fundamentals.pbRatio > 0 ? fundamentals.pbRatio : NaN;
-    const rg = isFiniteNum(fundamentals.revenueGrowth) ? fundamentals.revenueGrowth! : NaN;
-    const eg = isFiniteNum(fundamentals.earningsGrowth) ? fundamentals.earningsGrowth! : NaN;
-    const gm = isFiniteNum(fundamentals.grossMargin) ? fundamentals.grossMargin! : NaN;
-    const nm = isFiniteNum(fundamentals.netMargin) ? fundamentals.netMargin! : NaN;
-    const re = isFiniteNum(fundamentals.roe) ? fundamentals.roe! : NaN;
-    for (let i = 0; i < n; i++) {
-      f.peRatio[i] = pe;
-      f.pbRatio[i] = pb;
-      f.revenueGrowth[i] = rg;
-      f.earningsGrowth[i] = eg;
-      f.grossMargin[i] = gm;
-      f.netMargin[i] = nm;
-      f.roe[i] = re;
-    }
+  // When fundamentals unavailable, fill with 0 (neutral) instead of NaN
+  // Otherwise NaN fundamentals block ALL rows in extractRows
+  const pe = (fundamentals?.peRatio && fundamentals.peRatio > 0) ? fundamentals.peRatio : 0;
+  const pb = (fundamentals?.pbRatio && fundamentals.pbRatio > 0) ? fundamentals.pbRatio : 0;
+  const rg = fundamentals && isFiniteNum(fundamentals.revenueGrowth) ? fundamentals.revenueGrowth! : 0;
+  const eg = fundamentals && isFiniteNum(fundamentals.earningsGrowth) ? fundamentals.earningsGrowth! : 0;
+  const gm = fundamentals && isFiniteNum(fundamentals.grossMargin) ? fundamentals.grossMargin! : 0;
+  const nm = fundamentals && isFiniteNum(fundamentals.netMargin) ? fundamentals.netMargin! : 0;
+  const re = fundamentals && isFiniteNum(fundamentals.roe) ? fundamentals.roe! : 0;
+  for (let i = 0; i < n; i++) {
+    f.peRatio[i] = pe;
+    f.pbRatio[i] = pb;
+    f.revenueGrowth[i] = rg;
+    f.earningsGrowth[i] = eg;
+    f.grossMargin[i] = gm;
+    f.netMargin[i] = nm;
+    f.roe[i] = re;
   }
 
   // Find the first index where ALL model features are valid
