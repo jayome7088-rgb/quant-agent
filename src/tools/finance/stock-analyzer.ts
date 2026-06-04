@@ -256,9 +256,8 @@ export function createStockAnalyzer(): DynamicStructuredTool {
 
       // 11. Format output
       onProgress?.('Formatting analysis report...');
-      const dataTime = useSynthetic
-        ? new Date().toISOString()
-        : new Date(intradayBars[0].timestamp * 1000).toISOString();
+      const lastBar = historicalBars[historicalBars.length - 1];
+      const dataTime = new Date(lastBar.timestamp * 1000).toISOString();
 
       const analysisOutput = {
         ticker: displaySymbol,
