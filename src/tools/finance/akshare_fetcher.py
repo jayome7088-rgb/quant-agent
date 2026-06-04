@@ -20,6 +20,8 @@ def fetch_hk_daily(ticker: str, start_date: str, end_date: str):
 
     try:
         df = ak.stock_hk_daily(symbol=code, adjust="qfq")
+        print(f"[akshare] {code} columns: {list(df.columns)}", file=sys.stderr)
+        print(f"[akshare] {code} rows: {len(df)}, sample: {df.iloc[0].to_dict() if len(df) > 0 else 'EMPTY'}", file=sys.stderr)
     except Exception as e:
         raise RuntimeError(f"AKShare stock_hk_daily({code}) failed: {e}")
 
@@ -35,16 +37,32 @@ def fetch_hk_daily(ticker: str, start_date: str, end_date: str):
         df['date'] = pd.to_datetime(df['date']).dt.date
     df = df[(df['date'] >= start_dt) & (df['date'] <= end_dt)]
 
+    # AKShare column names vary by version: English or Chinese
+    col_map = {
+        'date': ['date', '日期'],
+        'open': ['open', '开盘'],
+        'high': ['high', '最高'],
+        'low': ['low', '最低'],
+        'close': ['close', '收盘'],
+        'volume': ['volume', '成交量'],
+    }
+    def get_col(row, key):
+        for name in col_map[key]:
+            if name in row:
+                return row[name]
+        raise KeyError(f"Cannot find {key} column. Available: {list(row.keys()) if hasattr(row, 'keys') else 'N/A'}")
+
     bars = []
     for _, row in df.iterrows():
-        ts = int(pd.Timestamp(row['date']).timestamp())
+        row_dict = row.to_dict()
+        ts = int(pd.Timestamp(get_col(row_dict, 'date')).timestamp())
         bars.append({
             "timestamp": ts,
-            "open": float(row['open']),
-            "high": float(row['high']),
-            "low": float(row['low']),
-            "close": float(row['close']),
-            "volume": int(row['volume']),
+            "open": float(get_col(row_dict, 'open')),
+            "high": float(get_col(row_dict, 'high')),
+            "low": float(get_col(row_dict, 'low')),
+            "close": float(get_col(row_dict, 'close')),
+            "volume": int(get_col(row_dict, 'volume')),
         })
 
     return bars

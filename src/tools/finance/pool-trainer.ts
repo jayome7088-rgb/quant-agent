@@ -143,8 +143,8 @@ async function trainUniversalModel(): Promise<PoolModel> {
 
   console.log(`[pool] Fetched ${fetched}/${HSI_STOCKS.length} stocks, ${allRows.length} total rows`);
 
-  if (allRows.length < 10000) {
-    throw new Error(`Insufficient training data: ${allRows.length} rows (need >= 10000)`);
+  if (allRows.length < 1000) {
+    throw new Error(`Insufficient training data: ${allRows.length} rows (need >= 1000)`);
   }
 
   // Sort all rows by date (strict chronological order)
@@ -229,19 +229,25 @@ function extractRows(matrix: IndicatorMatrix, bars: OHLCVBar[]): { features: num
   const { features, validStartIndex } = matrix;
   const n = matrix.closes.length;
 
+  let nanSkipped = 0, labelSkipped = 0;
   for (let i = validStartIndex; i < n && i < features.nextDayDirection.length; i++) {
-    if (!isFinite(features.nextDayDirection[i])) continue;
+    if (!isFinite(features.nextDayDirection[i])) { labelSkipped++; continue; }
     const row: number[] = [];
+    let nanCount = 0;
     for (const name of MODEL_FEATURE_NAMES) {
-      row.push(features[name as keyof typeof features][i]);
+      const v = features[name as keyof typeof features][i];
+      row.push(v);
+      if (!isFinite(v)) nanCount++;
     }
-    // Skip rows with any NaN features
-    if (row.some(v => !isFinite(v))) continue;
+    if (nanCount > 0) { nanSkipped++; continue; }
 
     const dt = new Date((bars[i]?.timestamp || 0) * 1000);
     const dateStr = dt.toISOString().slice(0, 10);
 
     rows.push({ features: row, label: features.nextDayDirection[i], date: dateStr });
+  }
+  if (rows.length === 0) {
+    console.log(`[pool]   extractRows: validStartIdx=${validStartIndex} n=${n} nanSkipped=${nanSkipped} labelSkipped=${labelSkipped} totalChecked=${n - validStartIndex}`);
   }
   return rows;
 }
