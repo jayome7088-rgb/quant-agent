@@ -3,7 +3,8 @@ import type { RunnableConfig } from '@langchain/core/runnables';
 import { z } from 'zod';
 import { formatToolResult } from '../types.js';
 import { OHLCVBar } from './eastmoney-api.js';
-import { fetchSinaQuote, fetchSinaChart } from './sina-api.js';
+import { fetchSinaQuote } from './sina-api.js';
+import { fetchAKShareChart } from './akshare-bridge.js';
 import { computeIndicators, extractTrainingMatrix, MODEL_FEATURE_NAMES } from './indicator-engine.js';
 import type { FundamentalSnapshot } from './indicator-engine.js';
 import { predictWithUniversalModel } from './pool-trainer.js';
@@ -145,22 +146,16 @@ export function createStockAnalyzer(): DynamicStructuredTool {
       // Ticker-based seed for synthetic data
       const tickerSeed = hashTicker(rawTicker);
 
-      // 3. Fetch intraday data (Sina 5m K-line)
-      onProgress?.(`Fetching intraday data...`);
-      let intradayBars: OHLCVBar[];
-      try {
-        const r = await fetchSinaChart(rawTicker, '5m', '5d');
-        intradayBars = r.quotes;
-      } catch {
-        intradayBars = syntheticBars(78, quotePrice, tickerSeed);
-        useSynthetic = true;
-      }
+      // 3. Fetch intraday data (synthetic — AKShare only supports 1d)
+      onProgress?.(`Generating intraday data...`);
+      const intradayBars = syntheticBars(78, quotePrice, tickerSeed);
+      // Intraday always synthetic — acceptable for daily prediction model
 
-      // 4. Fetch historical daily data (Sina daily K-line)
-      onProgress?.('Fetching historical data...');
+      // 4. Fetch historical daily data via AKShare
+      onProgress?.('Fetching historical data (AKShare)...');
       let historicalBars: OHLCVBar[];
       try {
-        const r = await fetchSinaChart(rawTicker, '1d', '2y');
+        const r = await fetchAKShareChart(rawTicker, '1d', '2y');
         historicalBars = r.quotes;
       } catch {
         historicalBars = syntheticBars(504, quotePrice, tickerSeed + 1);

@@ -5,7 +5,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync } from 'node:fs';
 import type { OHLCVBar } from './eastmoney-api.js';
-import { fetchSinaChart } from './sina-api.js';
+import { fetchAKShareChart } from './akshare-bridge.js';
 import { computeIndicators, MODEL_FEATURE_NAMES, type IndicatorMatrix, type FundamentalSnapshot } from './indicator-engine.js';
 import type { ModelOutput, FeatureImportance } from './xgb-bridge.js';
 
@@ -118,7 +118,7 @@ async function trainUniversalModel(): Promise<PoolModel> {
     try {
       const ticker = `${code}.HK`;
       // Fetch 5 years of daily data
-      const chart = await fetchSinaChart(ticker, '1d', '5y');
+      const chart = await fetchAKShareChart(ticker, '1d', '5y');
       const bars: OHLCVBar[] = chart.quotes;
       if (bars.length < 200) {
         console.log(`[pool]   ${code} skipped: only ${bars.length} bars`);
