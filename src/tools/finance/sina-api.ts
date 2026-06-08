@@ -109,7 +109,8 @@ export async function fetchSinaQuote(ticker: string): Promise<QuoteResult> {
   const sina = toSinaSymbol(ticker);
   if (!sina) throw new Error(`[Sina] Cannot map ticker: ${ticker}`);
 
-  const url = `http://hq.sinajs.cn/list=${sina.symbol}`;
+  // Cache bust: append timestamp to force fresh data
+  const url = `http://hq.sinajs.cn/list=${sina.symbol}&_=${Date.now()}`;
   console.log(`[sina] Quote: ${url}`);
   const text = await fetchGbkText(url, `quote ${ticker}`);
 

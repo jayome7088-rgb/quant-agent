@@ -351,6 +351,7 @@ export function computeIndicators(bars: OHLCVBar[], market = 'US', fundamentals?
 
     // SMA ratio & crossover
     if (isFinite(sma20[i]) && sma20[i] > 0) {
+      // (close - sma20) / sma20 — positive = price above SMA20
       f.smaRatio[i] = c / sma20[i] - 1;
     }
     if (isFinite(sma5[i]) && isFinite(sma20[i])) {
