@@ -121,36 +121,30 @@ export function createStockAnalyzer(): DynamicStructuredTool {
       onProgress?.('Normalizing ticker...');
       const { symbol, market } = normalizeTicker(rawTicker);
 
-      let useSynthetic = false;
-
-      // 2. Get quote from East Money (primary, single source)
+      // 2. Get real-time quote from East Money (MUST succeed — no synthetic fallback)
       onProgress?.('Fetching quote (East Money)...');
-      let quote: { symbol: string; price: number; change: number; changePercent: number; dayHigh: number; dayLow: number; volume: number; marketTime: number } = null!;
-      let quotePrice = 0;
+      let quote: { symbol: string; price: number; change: number; changePercent: number; dayHigh: number; dayLow: number; volume: number; marketTime: number };
       try {
         quote = await fetchQuote(symbol);
-        quotePrice = quote.price > 0 ? quote.price : 0;
+        if (!quote || quote.price <= 0) throw new Error('Invalid price data');
       } catch (e) {
-        console.warn(`[stock_analyzer] East Money quote FAILED: ${e instanceof Error ? e.message : String(e)}`);
+        const msg = e instanceof Error ? e.message : String(e);
+        return formatToolResult({
+          error: `实时行情获取失败: ${msg}。可能是触发了反爬机制，请10分钟后重试。`,
+        }, []);
       }
 
-      if (quotePrice <= 0) {
-        quotePrice = 100;
-        useSynthetic = true;
-        onProgress?.('⚠️ 东方财富行情获取失败，使用合成数据');
-      }
+      const quotePrice = quote.price;
 
-      // Ticker-based seed for synthetic data
-      const tickerSeed = hashTicker(rawTicker);
-
-      // 3. Fetch intraday data (synthetic — AKShare only supports 1d)
+      // 3. Intraday data (synthetic — AKShare only supports 1d, acceptable)
       onProgress?.(`Generating intraday data...`);
+      const tickerSeed = hashTicker(rawTicker);
       const intradayBars = syntheticBars(78, quotePrice, tickerSeed);
-      // Intraday always synthetic — acceptable for daily prediction model
 
       // 4. Fetch historical daily data via AKShare
       onProgress?.('Fetching historical data (AKShare)...');
       let historicalBars: OHLCVBar[];
+      let useSynthetic = false;
       try {
         const r = await fetchAKShareChart(rawTicker, '1d', '2y');
         historicalBars = r.quotes;
@@ -315,7 +309,7 @@ export function createStockAnalyzer(): DynamicStructuredTool {
       }
 
       if (useSynthetic) {
-        formatted = `⚠️  **注意：东方财富 API 暂时不可用，当前使用合成数据演示。**\n\n${formatted}`;
+        formatted = `⚠️  **注意：历史K线数据获取失败，当前使用合成数据进行技术分析。实时行情为真实数据。**\n\n${formatted}`;
       }
 
       return formatToolResult(

@@ -85,15 +85,33 @@ export function normalizeTicker(raw: string): { symbol: string; market: string; 
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
-async function fetchJson(url: string, label: string, retries = 2): Promise<any> {
+// Rate limiter: max 3 requests per minute, min 1.5s between requests
+let lastRequestTime = 0;
+let requestsThisMinute = 0;
+let minuteStart = Date.now();
+
+async function rateLimit(): Promise<void> {
+  const now = Date.now();
+  if (now - minuteStart > 60_000) { minuteStart = now; requestsThisMinute = 0; }
+  if (requestsThisMinute >= 3) {
+    const waitMs = 60_000 - (now - minuteStart) + 1000;
+    console.warn(`[eastmoney] Rate limit: waiting ${(waitMs/1000).toFixed(1)}s...`);
+    await new Promise(r => setTimeout(r, waitMs));
+    minuteStart = Date.now(); requestsThisMinute = 0;
+  }
+  const sinceLast = now - lastRequestTime;
+  if (sinceLast < 1500) await new Promise(r => setTimeout(r, 1500 - sinceLast));
+  lastRequestTime = Date.now();
+  requestsThisMinute++;
+}
+
+async function fetchJson(url: string, label: string, retries = 1): Promise<any> {
   // Try Bun fetch first, fallback to curl on repeated socket failures
   let socketFails = 0;
   let lastErr = '';
 
   for (let attempt = 0; attempt <= retries; attempt++) {
-    if (attempt > 0) {
-      await new Promise(r => setTimeout(r, attempt * 500));
-    }
+    await rateLimit();
 
     // After 2 socket failures, switch to curl
     if (socketFails >= 2) {
