@@ -86,9 +86,13 @@ async function handleAnalyzeSSE(url: URL): Promise<Response> {
           if (parsed.data) {
             if (typeof parsed.data === 'string') {
               text = parsed.data;
-            } else {
-              text = String(parsed.data.data || '');
-              plots = parsed.data.plots || {};
+            } else if (typeof parsed.data === 'object') {
+              if (parsed.data.error) {
+                text = `Error: ${parsed.data.error}`;
+              } else {
+                text = typeof parsed.data.data === 'string' ? parsed.data.data : JSON.stringify(parsed.data);
+                plots = parsed.data.plots || {};
+              }
             }
           }
         } catch { /* plain text */ }

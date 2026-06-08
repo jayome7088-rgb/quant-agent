@@ -200,8 +200,18 @@ export class Agent {
           try {
             const parsed = JSON.parse(answer);
             if (parsed.data) {
-              // data may be a string (legacy) or {data, plots} object
-              answer = typeof parsed.data === 'string' ? parsed.data : String(parsed.data.data || parsed.data);
+              if (typeof parsed.data === 'string') {
+                answer = parsed.data;
+              } else if (typeof parsed.data === 'object') {
+                // data may be {data, plots} or {error}
+                if (parsed.data.error) {
+                  answer = `Error: ${parsed.data.error}`;
+                } else if (typeof parsed.data.data === 'string') {
+                  answer = parsed.data.data;
+                } else {
+                  answer = JSON.stringify(parsed.data, null, 2);
+                }
+              }
             }
           } catch { /* not JSON, use as-is */ }
           yield { type: 'done', answer, toolCalls: [{ tool: 'stock_analyzer', args: { ticker: stockPreflight.ticker }, result: answer }], iterations: 1, totalTime: Date.now() - startTime };

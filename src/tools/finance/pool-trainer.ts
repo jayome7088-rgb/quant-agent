@@ -3,7 +3,7 @@
 // Individual queries use the saved model for prediction (no per-query training).
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import type { OHLCVBar } from './eastmoney-api.js';
 import { fetchAKShareChart } from './akshare-bridge.js';
 import { computeIndicators, MODEL_FEATURE_NAMES, type IndicatorMatrix, type FundamentalSnapshot } from './indicator-engine.js';
@@ -59,11 +59,38 @@ export function getCachedModel(): PoolModel | null {
   return cachedModel;
 }
 
+const META_PATH = join(__dirname, 'universal_model_meta.json');
+
+function loadModelMeta(): PoolModel | null {
+  try {
+    if (existsSync(MODEL_PATH) && existsSync(META_PATH)) {
+      return JSON.parse(readFileSync(META_PATH, 'utf-8')) as PoolModel;
+    }
+  } catch {}
+  return null;
+}
+
+function saveModelMeta(model: PoolModel): void {
+  writeFileSync(META_PATH, JSON.stringify(model, null, 2), 'utf-8');
+}
+
 export async function ensureModel(): Promise<PoolModel> {
   if (cachedModel) return cachedModel;
   if (trainingPromise) return trainingPromise;
+
+  // Load from disk if already trained
+  const meta = loadModelMeta();
+  if (meta && existsSync(MODEL_PATH)) {
+    console.log(`[pool] Model loaded from disk: ${meta.totalSamples} samples, out-sample ${(meta.outSampleAccuracy*100).toFixed(2)}%`);
+    cachedModel = meta;
+    return meta;
+  }
+
+  // Train new model
+  console.log('[pool] No saved model — training...');
   trainingPromise = trainUniversalModel();
   cachedModel = await trainingPromise;
+  saveModelMeta(cachedModel);
   trainingPromise = null;
   return cachedModel;
 }
