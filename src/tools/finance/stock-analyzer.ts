@@ -162,9 +162,9 @@ export function createStockAnalyzer(): DynamicStructuredTool {
         useSynthetic = true;
       }
 
-      if (historicalBars.length < 100) {
+      if (historicalBars.length < 30) {
         return formatToolResult({
-          error: `Insufficient historical data: only ${historicalBars.length} bars available (need at least 100).`,
+          error: `Insufficient historical data: only ${historicalBars.length} bars available (need at least 30).`,
         }, []);
       }
 
@@ -214,9 +214,9 @@ export function createStockAnalyzer(): DynamicStructuredTool {
 
       // 7. Extract training matrix
       const { X, y } = extractTrainingMatrix(indicators);
-      if (X.length < 60) {
+      if (X.length < 20) {
         return formatToolResult({
-          error: `Insufficient training samples: ${X.length} valid rows (need at least 60).`,
+          error: `Insufficient training samples: ${X.length} valid rows (need at least 20).`,
         }, []);
       }
 

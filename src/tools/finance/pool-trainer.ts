@@ -147,7 +147,7 @@ async function trainUniversalModel(): Promise<PoolModel> {
       // Fetch 5 years of daily data
       const chart = await fetchAKShareChart(ticker, '1d', '5y');
       const bars: OHLCVBar[] = chart.quotes;
-      if (bars.length < 200) {
+      if (bars.length < 30) {
         console.log(`[pool]   ${code} skipped: only ${bars.length} bars`);
         continue;
       }
