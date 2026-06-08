@@ -2,8 +2,7 @@ import { DynamicStructuredTool } from '@langchain/core/tools';
 import type { RunnableConfig } from '@langchain/core/runnables';
 import { z } from 'zod';
 import { formatToolResult } from '../types.js';
-import { OHLCVBar } from './eastmoney-api.js';
-import { fetchSinaQuote } from './sina-api.js';
+import { OHLCVBar, normalizeTicker, fetchQuote } from './eastmoney-api.js';
 import { fetchAKShareChart } from './akshare-bridge.js';
 import { computeIndicators, extractTrainingMatrix, MODEL_FEATURE_NAMES } from './indicator-engine.js';
 import type { FundamentalSnapshot } from './indicator-engine.js';
@@ -39,7 +38,7 @@ Performs comprehensive stock technical analysis including intraday data, technic
 - Optionally specify intraday interval (1m/5m/15m/30m/1h, default 5m)
 - Returns comprehensive formatted analysis with disclaimer
 
-NOTE: This tool fetches data from Sina Finance (新浪财经) API and performs XGBoost training + backtesting. May take 10-30 seconds.
+NOTE: This tool fetches data from East Money (东方财富) for quotes and AKShare for historical data. Uses pre-trained universal XGBoost model. May take 10-30 seconds.
 `.trim();
 
 const StockAnalyzerInputSchema = z.object({
@@ -109,7 +108,7 @@ function syntheticBars(n: number, startPrice = 180, seed = 42): OHLCVBar[] {
 export function createStockAnalyzer(): DynamicStructuredTool {
   return new DynamicStructuredTool({
     name: 'stock_analyzer',
-    description: `Comprehensive ML-based stock analysis tool. Performs: intraday data fetch, technical indicator computation, XGBoost prediction with rolling backtest, and generates a formatted analysis report. Use for stock analysis, trend prediction, buy/sell signals. Falls back to synthetic data if Sina Finance is unreachable.`,
+    description: `Comprehensive ML-based stock analysis tool. Performs: intraday data fetch, technical indicator computation, XGBoost prediction with rolling backtest, and generates a formatted analysis report. Use for stock analysis, trend prediction, buy/sell signals. Falls back to synthetic data if East Money is unreachable.`,
     schema: StockAnalyzerInputSchema,
     func: async (input, _runManager, config?: RunnableConfig) => {
       const onProgress = config?.metadata?.onProgress as ((msg: string) => void) | undefined;
@@ -117,30 +116,27 @@ export function createStockAnalyzer(): DynamicStructuredTool {
       const rawTicker = input.ticker.trim();
       const interval = input.interval ?? '5m';
 
-      // 1. Determine market from ticker pattern
-      const displaySymbol = rawTicker.toUpperCase();
-      const market = /^\d{6}$/.test(rawTicker) && rawTicker.startsWith('6') ? 'SS'
-        : /^\d{6}$/.test(rawTicker) ? 'SZ'
-        : /^\d{4,5}$/.test(rawTicker) ? 'HK'
-        : 'US';
+      // 1. Normalize ticker for East Money
+      onProgress?.('Normalizing ticker...');
+      const { symbol, market } = normalizeTicker(rawTicker);
 
       let useSynthetic = false;
 
-      // 2. Get quote from Sina Finance (single source, max 1 retry)
-      onProgress?.('Fetching quote (Sina Finance)...');
+      // 2. Get quote from East Money (primary, single source)
+      onProgress?.('Fetching quote (East Money)...');
       let quote: { symbol: string; price: number; change: number; changePercent: number; dayHigh: number; dayLow: number; volume: number; marketTime: number } = null!;
       let quotePrice = 0;
       try {
-        quote = await fetchSinaQuote(rawTicker);
+        quote = await fetchQuote(symbol);
         quotePrice = quote.price > 0 ? quote.price : 0;
       } catch (e) {
-        console.warn(`[stock_analyzer] Sina quote FAILED: ${e instanceof Error ? e.message : String(e)}`);
+        console.warn(`[stock_analyzer] East Money quote FAILED: ${e instanceof Error ? e.message : String(e)}`);
       }
 
       if (quotePrice <= 0) {
         quotePrice = 100;
         useSynthetic = true;
-        onProgress?.('⚠️ 新浪行情获取失败，使用合成数据');
+        onProgress?.('⚠️ 东方财富行情获取失败，使用合成数据');
       }
 
       // Ticker-based seed for synthetic data
@@ -172,7 +168,7 @@ export function createStockAnalyzer(): DynamicStructuredTool {
       if (!quote) {
         const b = intradayBars[intradayBars.length - 1];
         quote = {
-          symbol: displaySymbol, price: b.close, change: b.close - intradayBars[0].open,
+          symbol: symbol, price: b.close, change: b.close - intradayBars[0].open,
           changePercent: (b.close - intradayBars[0].open) / intradayBars[0].open * 100,
           dayHigh: Math.max(...intradayBars.map(x => x.high)),
           dayLow: Math.min(...intradayBars.map(x => x.low)),
@@ -186,7 +182,7 @@ export function createStockAnalyzer(): DynamicStructuredTool {
       let fundamentals: FundamentalSnapshot = {};
       try {
         const apiModule = await import('./api.js');
-        const { data } = await apiModule.api.get('/financial-metrics/snapshot/', { ticker: displaySymbol }, { cacheable: true, ttlMs: 3600000 });
+        const { data } = await apiModule.api.get('/financial-metrics/snapshot/', { ticker: symbol }, { cacheable: true, ttlMs: 3600000 });
         const snap = (data as Record<string, unknown>).snapshot || data;
         const s = snap as Record<string, unknown>;
         // Map API fields to our fundamental snapshot, cap extreme values
@@ -260,7 +256,7 @@ export function createStockAnalyzer(): DynamicStructuredTool {
       const dataTime = new Date(lastBar.timestamp * 1000).toISOString();
 
       const analysisOutput = {
-        ticker: displaySymbol,
+        ticker: symbol,
         market,
         currentPrice: quote.price,
         dayChange: quote.change,
@@ -291,12 +287,12 @@ export function createStockAnalyzer(): DynamicStructuredTool {
       }
 
       if (useSynthetic) {
-        formatted = `⚠️  **注意：新浪财经 API 暂时不可用，当前使用合成数据演示。**\n\n${formatted}`;
+        formatted = `⚠️  **注意：东方财富 API 暂时不可用，当前使用合成数据演示。**\n\n${formatted}`;
       }
 
       return formatToolResult(
         { data: formatted, plots: plotDataUrls },
-        [`https://finance.sina.com.cn/realstock/company/${displaySymbol.toLowerCase()}/nc.shtml`],
+        [`https://finance.sina.com.cn/realstock/company/${symbol.toLowerCase()}/nc.shtml`],
       );
     },
   });
