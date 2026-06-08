@@ -7,6 +7,7 @@ import { fetchAKShareChart } from './akshare-bridge.js';
 import { computeIndicators, extractTrainingMatrix, MODEL_FEATURE_NAMES } from './indicator-engine.js';
 import type { FundamentalSnapshot } from './indicator-engine.js';
 import { predictWithUniversalModel } from './pool-trainer.js';
+import { trainXGBoost, DEFAULT_TRAINING_CONFIG } from './xgb-bridge.js';
 import { runBacktest } from './backtest-engine.js';
 import { formatStockAnalysis, buildPlotData } from './output-formatter.js';
 import { loadStrategyConfig } from './strategy-config.js';
@@ -216,16 +217,31 @@ export function createStockAnalyzer(): DynamicStructuredTool {
         }, []);
       }
 
-      // 8. Predict with universal model (pre-trained on HSI pool)
+      // 8. Get prediction AND stock-specific analysis
       onProgress?.('Predicting with universal model...');
       let modelOutput;
       try {
+        // Use universal model for the actual next-day probability signal
         const predResult = await predictWithUniversalModel(X, MODEL_FEATURE_NAMES);
+
+        // Fit per-stock XGBoost to get rolling metrics + stock-specific feature importance
+        let stockFi = predResult.featureImportance;
+        let rollingResults: any[] = [];
+        let aggMetrics = { avgAccuracy: 0, avgPrecision: 0, avgRecall: 0, avgF1: 0 };
+        try {
+          const perStock = await trainXGBoost(X, y, MODEL_FEATURE_NAMES, { ...DEFAULT_TRAINING_CONFIG, windowSize: Math.min(120, Math.floor(X.length * 0.7)), testSize: Math.min(20, Math.floor(X.length * 0.2)), stepSize: Math.max(10, Math.floor(X.length / 10)) });
+          stockFi = perStock.featureImportance;
+          rollingResults = perStock.rollingResults;
+          aggMetrics = perStock.aggregateMetrics;
+        } catch {
+          // If per-stock training fails (too few samples), use universal model's FI
+        }
+
         modelOutput = {
           coefficients: [],
-          featureImportance: predResult.featureImportance,
-          rollingResults: [],
-          aggregateMetrics: { avgAccuracy: 0, avgPrecision: 0, avgRecall: 0, avgF1: 0 },
+          featureImportance: stockFi,
+          rollingResults,
+          aggregateMetrics: aggMetrics,
           allPredictions: predResult.allPredictions,
           nextDayProbability: predResult.nextDayProbability,
         };
