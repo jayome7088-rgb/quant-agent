@@ -193,6 +193,17 @@
 console.log('[client] QuantAgent page loaded');
 console.log('[client] SSE-only mode — no WebSocket');
 
+// Clear frontend caches on page load (preserve API key)
+(function clearFrontendCache() {
+  const apiKey = localStorage.getItem('quant_agent_apikey');
+  const provider = localStorage.getItem('quant_agent_provider');
+  localStorage.clear();
+  sessionStorage.clear();
+  if (apiKey) localStorage.setItem('quant_agent_apikey', apiKey);
+  if (provider) localStorage.setItem('quant_agent_provider', provider);
+  console.log('[client] Frontend cache cleared, API key preserved');
+})();
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Tabs
 // ═══════════════════════════════════════════════════════════════════════════
@@ -345,7 +356,10 @@ async function startAnalysis() {
 
   addLog(`开始分析 ${ticker} (${interval})...`, 'stage');
 
-  const url = `/api/analyze?ticker=${encodeURIComponent(ticker)}&interval=${interval}`;
+  // Clear old results
+  result.innerHTML = '<div class="empty-state">分析中…</div>';
+  // Cache bust: append timestamp to force fresh data
+  const url = `/api/analyze?ticker=${encodeURIComponent(ticker)}&interval=${interval}&_=${Date.now()}`;
   console.log('[client] SSE analyze connecting via fetch:', url);
 
   const chartData = {};
@@ -419,6 +433,7 @@ async function startAnalysis() {
     } else {
       console.error('[client] SSE fetch error:', err);
       addLog(`连接失败: ${err.message}`, 'error');
+      result.innerHTML = `<div class="empty-state">获取数据失败<br><small>${escHtml(err.message)}</small><br><br><button class="btn-primary" onclick="startAnalysis()">重新获取</button></div>`;
       btn.disabled = false;
     }
   } finally {

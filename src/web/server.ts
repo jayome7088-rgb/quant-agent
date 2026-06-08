@@ -111,7 +111,7 @@ async function handleAnalyzeSSE(url: URL): Promise<Response> {
 
         // Send text result
         sse.send('result', text);
-        sse.send('done', JSON.stringify({ ticker, interval }));
+        sse.send('done', JSON.stringify({ ticker, interval, serverTime: new Date().toISOString() }));
 
         // Save to history
         try {
