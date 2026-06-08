@@ -130,16 +130,18 @@ export async function fetchSinaQuote(ticker: string): Promise<QuoteResult> {
   if (sina.prefix === 'hk') {
     const off = hasChineseName ? 1 : 0;
     const name = hasChineseName ? (fields[1] || fields[0] || ticker) : (fields[0] || ticker);
-    const open = parseFloat(fields[1 + off]) || 0;
-    const prevClose = parseFloat(fields[2 + off]) || 0;
-    const high = parseFloat(fields[3 + off]) || 0;
-    const low = parseFloat(fields[4 + off]) || 0;
-    const price = parseFloat(fields[5 + off]) || 0;
-    const changeRaw = parseFloat(fields[6 + off]) || 0;
-    const changePctRaw = parseFloat(fields[7 + off]) || 0;
-    const volume = Math.abs(parseInt(fields[8 + off] || fields[9 + off], 10) || 0);
-
-    // Market hours: HK 09:30-12:00, 13:00-16:00 HKT (UTC+8)
+    // Validate: force Number(), reject negative/zero prices
+    const open = Math.abs(Number(fields[1 + off]) || 0);
+    const prevClose = Math.abs(Number(fields[2 + off]) || 0);
+    const high = Math.abs(Number(fields[3 + off]) || 0);
+    const low = Math.abs(Number(fields[4 + off]) || 0);
+    const price = Math.abs(Number(fields[5 + off]) || 0);
+    if (price <= 0) throw new Error(`[Sina] Invalid price=0 for ${ticker}`);
+    const changeRaw = Number(fields[6 + off]) || 0;
+    const changePctRaw = Number(fields[7 + off]) || 0;
+    // Sina HK volume is in 手 (lots = 100 shares), convert to actual shares
+    const volumeRaw = Math.abs(parseInt(fields[8 + off] || fields[9 + off], 10) || 0);
+    const volume = isFinite(volumeRaw) ? volumeRaw * 100 : 0;
     const now = new Date();
     const hktHour = (now.getUTCHours() + 8) % 24;
     const hktMin = now.getUTCMinutes();
@@ -157,12 +159,14 @@ export async function fetchSinaQuote(ticker: string): Promise<QuoteResult> {
   if (sina.prefix === 'sh' || sina.prefix === 'sz') {
     const off = hasChineseName ? 1 : 0;
     const name = hasChineseName ? (fields[1] || fields[0] || ticker) : (fields[0] || ticker);
-    const open = parseFloat(fields[1 + off]) || 0;
-    const prevClose = parseFloat(fields[2 + off]) || 0;
-    const price = parseFloat(fields[3 + off]) || 0;
-    const high = parseFloat(fields[4 + off]) || 0;
-    const low = parseFloat(fields[5 + off]) || 0;
-    const volume = Math.abs(parseInt(fields[8 + off], 10) || 0);
+    const open = Math.abs(Number(fields[1 + off]) || 0);
+    const prevClose = Math.abs(Number(fields[2 + off]) || 0);
+    const price = Math.abs(Number(fields[3 + off]) || 0);
+    if (price <= 0) throw new Error(`[Sina] Invalid price=0 for ${ticker}`);
+    const high = Math.abs(Number(fields[4 + off]) || 0);
+    const low = Math.abs(Number(fields[5 + off]) || 0);
+    const volumeRaw = Math.abs(parseInt(fields[8 + off], 10) || 0);
+    const volume = isFinite(volumeRaw) ? volumeRaw * 100 : 0; // 手→股
     const change = price - prevClose;
     const changePct = prevClose > 0 ? (change / prevClose) * 100 : 0;
 
