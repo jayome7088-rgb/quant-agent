@@ -3,7 +3,7 @@ import type { RunnableConfig } from '@langchain/core/runnables';
 import { z } from 'zod';
 import { formatToolResult } from '../types.js';
 import { OHLCVBar, normalizeTicker, fetchQuote } from './eastmoney-api.js';
-import { fetchAKShareChart } from './akshare-bridge.js';
+import { fetchAKShareChart, fetchAKShareQuote } from './akshare-bridge.js';
 import { computeIndicators, extractTrainingMatrix, MODEL_FEATURE_NAMES } from './indicator-engine.js';
 import type { FundamentalSnapshot } from './indicator-engine.js';
 import { predictWithUniversalModel } from './pool-trainer.js';
@@ -121,17 +121,24 @@ export function createStockAnalyzer(): DynamicStructuredTool {
       onProgress?.('Normalizing ticker...');
       const { symbol, market } = normalizeTicker(rawTicker);
 
-      // 2. Get real-time quote from East Money (MUST succeed — no synthetic fallback)
-      onProgress?.('Fetching quote (East Money)...');
+      // 2. Get real-time quote — East Money primary, AKShare fallback
+      onProgress?.('Fetching quote...');
       let quote: { symbol: string; price: number; change: number; changePercent: number; dayHigh: number; dayLow: number; volume: number; marketTime: number };
       try {
         quote = await fetchQuote(symbol);
         if (!quote || quote.price <= 0) throw new Error('Invalid price data');
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        return formatToolResult({
-          error: `实时行情获取失败: ${msg}。可能是触发了反爬机制，请10分钟后重试。`,
-        }, []);
+      } catch (emErr) {
+        // East Money failed — try AKShare fallback
+        console.warn(`[stock_analyzer] East Money failed: ${emErr instanceof Error ? emErr.message : String(emErr)}`);
+        onProgress?.('East Money failed, trying AKShare fallback...');
+        try {
+          quote = await fetchAKShareQuote(symbol);
+        } catch (akErr) {
+          const msg = akErr instanceof Error ? akErr.message : String(akErr);
+          return formatToolResult({
+            error: `所有数据源均不可用。东方财富: ${emErr instanceof Error ? emErr.message.slice(0,50) : 'failed'}。AKShare: ${msg.slice(0,50)}。请10分钟后重试。`,
+          }, []);
+        }
       }
 
       const quotePrice = quote.price;

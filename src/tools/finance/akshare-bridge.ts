@@ -29,6 +29,64 @@ function findPython(): string {
  * ticker: "09868.HK", "00700.HK", etc.
  * range: "1y", "2y", "5y" → maps to start_date
  */
+/**
+ * Fetch HK stock real-time quote via AKShare as fallback.
+ * Tries multiple AKShare backends: stock_hk_spot_em (East Money via AKShare) then stock_hk_spot_xq (Xueqiu).
+ */
+export async function fetchAKShareQuote(ticker: string): Promise<{
+  symbol: string; price: number; change: number; changePercent: number;
+  dayHigh: number; dayLow: number; volume: number; marketTime: number;
+}> {
+  const python = findPython();
+  // Simple inline Python that tries AKShare quote backends
+  const code = ticker.replace('.HK', '').replace('.SS', '').replace('.SZ', '');
+  const script = `
+import json, sys
+try:
+    import akshare as ak
+    df = ak.stock_hk_spot_em()
+    row = df[df['代码'] == '${code}']
+    if row.empty:
+        df = ak.stock_hk_spot_xq()
+        row = df[df['symbol'] == '${code}']
+    if row.empty:
+        print(json.dumps({"error": "AKShare: no quote data for ${code}"}))
+        sys.exit(1)
+    r = row.iloc[0]
+    print(json.dumps({
+        "symbol": str(r.get('名称', '${ticker}')),
+        "price": float(r.get('最新价', 0)),
+        "change": float(r.get('涨跌额', 0)),
+        "changePercent": float(r.get('涨跌幅', 0)),
+        "dayHigh": float(r.get('最高', 0)),
+        "dayLow": float(r.get('最低', 0)),
+        "volume": int(float(r.get('成交量', 0))),
+    }))
+except Exception as e:
+    print(json.dumps({"error": str(e)}))
+    sys.exit(1)
+`;
+  const proc = Bun.spawn([python, '-c', script], { stdout: 'pipe', stderr: 'pipe' });
+  const stdout = await new Response(proc.stdout).text();
+  const exitCode = await proc.exited;
+  if (exitCode !== 0) {
+    const stderr = await new Response(proc.stderr).text();
+    throw new Error(`AKShare quote failed: ${stderr || stdout}`);
+  }
+  const data = JSON.parse(stdout);
+  if (data.error) throw new Error(data.error);
+  return {
+    symbol: data.symbol || ticker,
+    price: data.price || 0,
+    change: data.change || 0,
+    changePercent: data.changePercent || 0,
+    dayHigh: data.dayHigh || 0,
+    dayLow: data.dayLow || 0,
+    volume: data.volume || 0,
+    marketTime: Math.floor(Date.now() / 1000),
+  };
+}
+
 export async function fetchAKShareChart(
   ticker: string,
   interval: string,
