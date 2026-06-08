@@ -165,6 +165,18 @@ export function createStockAnalyzer(): DynamicStructuredTool {
         }, []);
       }
 
+      // For stocks with < 120 bars, skip ML analysis entirely — not enough data
+      if (historicalBars.length < 120) {
+        const msg = `⚠️ 该股票上市时间较短（仅 ${historicalBars.length} 条历史数据），历史数据不足，无法生成准确分析。请等待积累更多交易日数据后再试。`;
+        if (quote!) {
+          return formatToolResult(
+            `${msg}\n\n**${symbol} 实时行情**\n当前价格: $${quote.price.toFixed(2)}\n日内涨跌: ${quote.change >= 0 ? '+' : ''}${quote.change.toFixed(2)} (${quote.changePercent >= 0 ? '+' : ''}${quote.changePercent.toFixed(2)}%)\n日内最高: $${quote.dayHigh.toFixed(2)}\n日内最低: $${quote.dayLow.toFixed(2)}\n成交量: ${quote.volume.toLocaleString()}\n数据时间: ${new Date(quote.marketTime * 1000).toISOString()}\n数据源: 东方财富 (East Money)`,
+            [],
+          );
+        }
+        return formatToolResult(msg, []);
+      }
+
       // Build quote from intraday bars if fetch failed
       if (!quote) {
         const b = intradayBars[intradayBars.length - 1];
@@ -221,20 +233,20 @@ export function createStockAnalyzer(): DynamicStructuredTool {
       onProgress?.('Predicting with universal model...');
       let modelOutput;
       try {
-        // Use universal model for the actual next-day probability signal
+        // Universal model for next-day probability
         const predResult = await predictWithUniversalModel(X, MODEL_FEATURE_NAMES);
 
-        // Fit per-stock XGBoost to get rolling metrics + stock-specific feature importance
+        // Fit per-stock XGBoost for rolling metrics + stock-specific FI
         let stockFi = predResult.featureImportance;
         let rollingResults: any[] = [];
         let aggMetrics = { avgAccuracy: 0, avgPrecision: 0, avgRecall: 0, avgF1: 0 };
         try {
-          const perStock = await trainXGBoost(X, y, MODEL_FEATURE_NAMES, { ...DEFAULT_TRAINING_CONFIG, windowSize: Math.min(120, Math.floor(X.length * 0.7)), testSize: Math.min(20, Math.floor(X.length * 0.2)), stepSize: Math.max(10, Math.floor(X.length / 10)) });
+          const perStock = await trainXGBoost(X, y, MODEL_FEATURE_NAMES, DEFAULT_TRAINING_CONFIG);
           stockFi = perStock.featureImportance;
           rollingResults = perStock.rollingResults;
           aggMetrics = perStock.aggregateMetrics;
         } catch {
-          // If per-stock training fails (too few samples), use universal model's FI
+          // Use universal model FI if per-stock fails
         }
 
         modelOutput = {
