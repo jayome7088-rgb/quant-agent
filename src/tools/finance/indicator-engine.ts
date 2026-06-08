@@ -504,22 +504,29 @@ export function computeIndicators(bars: OHLCVBar[], market = 'US', fundamentals?
     f.roe[i] = re;
   }
 
-  // Find the first index where ALL model features are valid
-  let validStartIndex = 60; // at minimum, need 60 bars for SMA60
-  for (let i = validStartIndex; i < n - 1; i++) {
-    let allValid = true;
-    for (const name of MODEL_FEATURE_NAMES) {
-      const arr = f[name as keyof IndicatorFeatures];
-      if (!isFinite(arr[i])) {
-        allValid = false;
-        break;
-      }
+  // Fill any remaining NaN model features with 0 (handles short-history IPOs).
+  // SMA60, smaRatio, etc. may be NaN when n < 60 bars.
+  for (const name of MODEL_FEATURE_NAMES) {
+    const arr = f[name as keyof IndicatorFeatures];
+    for (let i = 0; i < n; i++) {
+      if (!isFinite(arr[i])) arr[i] = 0;
     }
-    if (allValid && isFinite(f.nextDayDirection[i])) {
+  }
+
+  // Also fill nextDayDirection NaN (last bar) with 0
+  for (let i = 0; i < n; i++) {
+    if (!isFinite(f.nextDayDirection[i])) f.nextDayDirection[i] = 0;
+  }
+
+  // Find validStartIndex: first bar where label exists
+  let validStartIndex = 0;
+  for (let i = 20; i < n - 1; i++) {
+    if (f.nextDayDirection[i] !== 0 || i > 20) {
       validStartIndex = i;
       break;
     }
   }
+  validStartIndex = Math.min(validStartIndex, n - 2);
 
   return { closes, volumes, highs, lows, opens, returns, features: f, validStartIndex };
 }
